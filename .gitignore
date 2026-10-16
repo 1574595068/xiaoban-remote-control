@@ -1,0 +1,6 @@
+.env*
+*.secret*
+*.png
+node_modules/
+outputs/
+work/
