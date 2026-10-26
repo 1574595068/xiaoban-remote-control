@@ -70,3 +70,7 @@ license are checked in alongside the bundle. QoS 1 publication waits for broker 
 The UI separately records attempts, broker acceptance and authenticated device receipts.
 Broker acceptance does not mean that the board executed the request or the PC booted.
 Failed clock probes are retried after reconnect and foreground resume.
+
+Network Information API changes force new board and computer connections even if
+navigator.onLine stays true during Wi-Fi/cellular handoff. The reconnect control
+also replaces both connections immediately instead of retaining a recent socket.

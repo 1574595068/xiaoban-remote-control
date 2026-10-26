@@ -1,4 +1,4 @@
-import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261027.1';
+import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261027.2';
 const $=id=>document.getElementById(id);
 export function classifyComputerRequest(text){
   text=text.trim();
@@ -247,6 +247,7 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
     onBoard:packet=>applyProfiles(packet.status),
     refresh:renderSave,
     resume:()=>{for(const c of clients)c.channel?.resume();},
+    reconnect:()=>{for(const c of clients)c.channel?.reconnect();},
     close:()=>{closed=true;sequence++;for(const c of clients)c.close();clients.clear();},
     handleText:text=>{
       const action=classifyComputerRequest(text);if(!action)return false;

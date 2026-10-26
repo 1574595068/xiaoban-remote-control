@@ -1,5 +1,5 @@
-import {DeviceChannel,decodePair} from './transport.mjs?v=20261027.1';
-import {attachComputer} from './computer-ui.mjs?v=20261027.1';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261027.2';
+import {attachComputer} from './computer-ui.mjs?v=20261027.2';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
 const BUILD=document.documentElement.dataset.build;
 const labels={pc_wake:'发送电脑唤醒包',pc_list:'读取电脑列表',pc_save:'保存电脑配置',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
@@ -170,7 +170,7 @@ for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>{
 $('pc-entry').onclick=()=>document.querySelector('[data-tab="computer"]').click();
 if(new URLSearchParams(location.search).get('view')==='computer')$('pc-entry').click();
 $('retry').onclick=()=>void start();
-$('delivery-reconnect').onclick=()=>{channel?.reconnect();computerUI?.resume();renderStatus();};
+$('delivery-reconnect').onclick=()=>networkChanged();
 $('delivery-download').onclick=()=>{
   const url=URL.createObjectURL(new Blob([JSON.stringify(deliveryReport(),null,2)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download='xiaoban-connection-check.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -191,6 +191,10 @@ setInterval(()=>{
 },1000);
 function resume(){channel?.resume();computerUI?.resume();renderStatus();void pump();}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)resume();});
-window.addEventListener('online',resume);window.addEventListener('pageshow',resume);
+function networkChanged(){channel?.reconnect();computerUI?.reconnect();renderStatus();}
+// Wi-Fi to cellular can keep navigator.onLine true; online never fires.
+const networkInfo=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+networkInfo?.addEventListener?.('change',networkChanged);
+window.addEventListener('online',networkChanged);window.addEventListener('pageshow',resume);
 renderCommands();void start();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});

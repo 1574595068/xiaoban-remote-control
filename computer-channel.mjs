@@ -1,4 +1,4 @@
-import {DeviceChannel} from './transport.mjs?v=20261027.1';
+import {DeviceChannel} from './transport.mjs?v=20261027.2';
 export const validComputerId=id=>typeof id==='string'&&/^[a-z0-9_-]{1,48}$/.test(id);
 export function acceptsComputerCommand(command,id,now=Date.now(),mac=null){
   return !!command&&validComputerId(id)&&command.computer_id===id&&(!mac||command.expected_mac===mac)&&typeof command.id==='string'&&/^[a-zA-Z0-9_-]{16,64}$/.test(command.id)&&['status','open_asklink','capture_asklink','open_capture'].includes(command.kind)&&Number.isFinite(command.expires_at)&&command.expires_at>now&&command.expires_at<=now+300000;
