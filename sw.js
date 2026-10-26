@@ -1,5 +1,5 @@
-const CACHE='xiaoban-direct-v9';
-self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(['./','./index.html','./style.css?v=20261026.9','./app.mjs?v=20261026.9','./transport.mjs?v=20261026.9','./computer-channel.mjs?v=20261026.9','./computer-ui.mjs?v=20261026.9'])).then(()=>self.skipWaiting()));});
+const CACHE='xiaoban-direct-v10';
+self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(['./','./index.html','./mqtt.esm.mjs','./style.css?v=20261027.1','./app.mjs?v=20261027.1','./transport.mjs?v=20261027.1','./computer-channel.mjs?v=20261027.1','./computer-ui.mjs?v=20261027.1'])).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('xiaoban-direct-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
 self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET'||new URL(event.request.url).origin!==location.origin)return;

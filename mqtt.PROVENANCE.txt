@@ -1,0 +1,5 @@
+MQTT.js 5.16.1
+https://github.com/mqttjs/MQTT.js
+MIT license: mqtt.LICENSE.md
+Source: https://registry.npmjs.org/mqtt/-/mqtt-5.16.1.tgz
+Tarball SHA512: 9aEaiR/mLblsMAiynD8quhcGTaINdta2bdyknAtfVzESfoe6Ncdh/uEs5p+3zqcTEtgYErwL4pNk0QkAynXxlg==

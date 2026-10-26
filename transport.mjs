@@ -1,7 +1,14 @@
+import mqtt from './mqtt.esm.mjs';
 const enc = new TextEncoder(), dec = new TextDecoder();
-let clockCalibration;
-async function networkClock(){
+let clockCalibration,goodClock;
+function usableClock(){
+  if(!goodClock)return false;
+  const elapsed=Date.now()-goodClock.localAt;
+  return elapsed>=0&&elapsed<300000&&Math.abs(elapsed-(performance.now()-goodClock.monotonicAt))<5000;
+}
+async function networkClock(force=false){
   if(typeof window==='undefined')return {offset:0,synced:false};
+  if(!force&&usableClock())return goodClock;
   if(!clockCalibration)clockCalibration=(async()=>{
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000),started=Date.now();
     try{
@@ -9,11 +16,13 @@ async function networkClock(){
       const response=await fetch(url,{method:'HEAD',cache:'no-store',signal:controller.signal});
       const serverTime=Date.parse(response.headers.get('Date'));
       if(!response.ok||!Number.isFinite(serverTime))throw Error('Clock unavailable');
-      return {offset:serverTime-(started+Date.now())/2,synced:true};
-    }catch{return {offset:0,synced:false};}
+      goodClock={offset:serverTime-(started+Date.now())/2,synced:true,localAt:Date.now(),monotonicAt:performance.now()};
+      return goodClock;
+    }catch{return usableClock()?goodClock:{offset:0,synced:false};}
     finally{clearTimeout(timeout);}
   })();
-  return clockCalibration;
+  const current=clockCalibration;
+  try{return await current;}finally{if(clockCalibration===current)clockCalibration=null;}
 }
 const hex = a => Array.from(a, x => x.toString(16).padStart(2, '0')).join('');
 const bytes = h => {
@@ -21,13 +30,6 @@ const bytes = h => {
   return Uint8Array.from(h.match(/../g), x => parseInt(x,16));
 };
 const concat = (...arrays) => {const out=new Uint8Array(arrays.reduce((n,a)=>n+a.length,0));let offset=0;for(const a of arrays){out.set(a,offset);offset+=a.length;}return out;};
-const u16 = n => new Uint8Array([n>>8,n&255]);
-const str = text => {const b=enc.encode(text);return concat(u16(b.length),b);};
-const frame = (kind, body) => {
-  let n=body.length; const header=[kind];
-  do {let b=n%128;n=Math.floor(n/128);header.push(b|(n?128:0));} while(n);
-  return concat(new Uint8Array(header),body);
-};
 export function decodePair(value) {
   if(typeof value!=='string'||value.length>400||!/^[A-Za-z0-9_-]+$/.test(value))throw Error('专属链接无效，请重新扫描二维码。');
   const b=Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
@@ -60,85 +62,138 @@ export async function codec(config) {
   };
 }
 export class DeviceChannel {
-  constructor(config,{onPacket=()=>{},onState=()=>{},inbound='device',outbound='server',requireStatus=true}={}) {
-    this.config=config;this.onPacket=onPacket;this.onState=onState;this.inbound=inbound;this.outbound=outbound;this.requireStatus=requireStatus;this.buffer=new Uint8Array();
-    this.chain=Promise.resolve();this.sequence=10;this.failures=0;this.closed=false;this.connected=false;this.lastRxAt=0;
+  constructor(config,{onPacket=()=>{},onState=()=>{},onClock=()=>{},inbound='device',outbound='server',requireStatus=true,mqttConnect=mqtt.connect,publishTimeoutMs=12000}={}) {
+    this.config=config;this.onPacket=onPacket;this.onState=onState;this.onClock=onClock;
+    this.inbound=inbound;this.outbound=outbound;this.requireStatus=requireStatus;this.mqttConnect=mqttConnect;
+    this.publishTimeoutMs=publishTimeoutMs;this.chain=Promise.resolve();this.closed=false;this.connected=false;
+    this.lastRxAt=0;this.epoch=0;this.pendingPublishes=new Set();
   }
   async start(){
-    this.crypto=await codec(this.config);
-    const clock=await networkClock();this.clockOffset=clock.offset;this.clockSynchronized=clock.synced;
+    this.crypto=await codec(this.config);await this.syncClock();
+    if(this.closed)return;
     this.connect();
+    this.monitor=setInterval(()=>{
+      if(!this.clockSynchronized||Date.now()-this.clockCheckedAt>=300000)void this.syncClock();
+      if(this.connected&&Date.now()-this.lastRxAt>45000)this.reconnect();
+    },15000);
+  }
+  async syncClock(force=false){
+    if(this.clockRequest)return this.clockRequest;
+    this.clockPending=true;
+    this.clockRequest=(async()=>{
+      try{const clock=await networkClock(force);this.clockOffset=clock.offset;this.clockSynchronized=clock.synced;this.clockCheckedAt=Date.now();}
+      finally{this.clockPending=false;this.clockRequest=null;if(!this.closed)this.onClock();}
+    })();
+    return this.clockRequest;
+  }
+  invalidate(message='连接已中断，尚未确认服务器收到指令。'){
+    this.connected=false;this.epoch++;clearTimeout(this.subscriptionTimer);
+    for(const pending of [...this.pendingPublishes])pending.finish(Error(message),true);
   }
   connect(){
+    if(this.closed||this.client)return;
+    this.onState('connecting');
+    const client=this.client=this.mqttConnect('wss://broker.emqx.io:8084/mqtt',{
+      protocolVersion:4,clean:true,clientId:'xb-web-'+crypto.randomUUID().replace(/-/g,'').slice(0,16),
+      keepalive:20,connectTimeout:12000,reconnectPeriod:2000,reconnectOnConnackError:true,forceNativeWebSocket:true,queueQoSZero:false,
+      // Subscribe through MQTT.js after every CONNACK so readiness requires that
+      // connection's successful SUBACK, rather than an old local subscription.
+      resubscribe:false,
+      createWebsocket:(url,protocols)=>new globalThis.WebSocket(url,protocols)
+    });
+    const current=()=>!this.closed&&client===this.client;
+    client.on('packetreceive',()=>{if(current())this.lastRxAt=Date.now();});
+    client.on('connect',()=>{
+      if(!current())return;
+      this.invalidate();this.lastRxAt=Date.now();const epoch=this.epoch;
+      const topic=this.config.topic+'/'+this.inbound;
+      this.subscriptionTimer=setTimeout(()=>{
+        if(current()&&epoch===this.epoch&&!this.connected)this.retryConnection('服务器未确认消息订阅。');
+      },12000);
+      client.subscribe(topic,{qos:1},(error,granted)=>{
+        if(!current()||epoch!==this.epoch)return;
+        clearTimeout(this.subscriptionTimer);
+        if(error||!Array.isArray(granted)||!granted.some(item=>item.topic===topic&&(item.qos===0||item.qos===1))){
+          this.retryConnection('服务器拒绝消息订阅。');return;
+        }
+        this.connected=true;this.onState('connected');
+      });
+    });
+    const disconnected=()=>{
+      if(!current())return;this.invalidate();this.onState('reconnecting');
+    };
+    client.on('offline',disconnected);client.on('close',disconnected);
+    client.on('reconnect',()=>{if(!current())return;disconnected();void this.syncClock();});
+    client.on('error',error=>{if(current())this.lastError=String(error?.message||'连接失败').slice(0,160);});
+    client.on('message',(topic,payload)=>{
+      if(!current()||topic!==this.config.topic+'/'+this.inbound)return;
+      this.lastRxAt=Date.now();const epoch=this.epoch;
+      this.chain=this.chain.then(()=>this.receive(payload,client,epoch)).catch(()=>{});
+    });
+  }
+  retryConnection(message){
     if(this.closed)return;
-    this.connected=false;this.onState('connecting');this.buffer=new Uint8Array();this.lastRxAt=Date.now();
-    const ws=this.ws=new WebSocket('wss://broker.emqx.io:8084/mqtt','mqtt');
-    ws.binaryType='arraybuffer';
-    this.deadline=setTimeout(()=>{if(ws===this.ws&&!this.connected)ws.close();},12000);
-    ws.onopen=()=>ws.send(frame(0x10,concat(new Uint8Array([0,4,77,81,84,84,4,2,0,30]),str('xb-web-'+crypto.randomUUID().replace(/-/g,'').slice(0,16)))));
-    ws.onmessage=e=>{
-      if(ws!==this.ws)return;this.lastRxAt=Date.now();
-      this.chain=this.chain.then(()=>this.receive(new Uint8Array(e.data),ws)).catch(()=>{if(ws===this.ws)ws.close();});
-    };
-    ws.onerror=()=>ws.close();
-    ws.onclose=()=>{
-      if(ws!==this.ws)return;
-      clearTimeout(this.deadline);clearInterval(this.ping);this.connected=false;
-      if(this.closed)return;
-      this.onState('reconnecting');
-      this.retry=setTimeout(()=>this.connect(),Math.min(30000,1000*2**Math.min(this.failures++,5)));
-    };
-    this.ping=setInterval(()=>{
-      if(ws!==this.ws)return;
-      if(Date.now()-this.lastRxAt>45000){this.reconnect();return;}
-      if(ws.readyState===WebSocket.OPEN)ws.send(new Uint8Array([0xc0,0]));
-    },15000);
+    this.lastError=message;this.invalidate(message);this.onState('reconnecting');
+    const old=this.client;this.client=null;old?.end(true);
+    clearTimeout(this.retry);this.retry=setTimeout(()=>this.connect(),2000);
   }
   reconnect(){
     if(this.closed||!this.crypto)return;
-    clearTimeout(this.retry);clearTimeout(this.deadline);clearInterval(this.ping);
-    const old=this.ws;this.ws=null;this.connected=false;old?.close();this.connect();
+    clearTimeout(this.retry);this.invalidate();void this.syncClock(true);
+    const old=this.client;this.client=null;old?.end(true);this.connect();
   }
-  resume(){if(!this.closed&&(!this.connected||Date.now()-this.lastRxAt>20000))this.reconnect();}
-  async receive(part,ws=this.ws){
-    if(ws!==this.ws)return;
-    this.buffer=concat(this.buffer,part);
-    if(this.buffer.length>600000)throw Error('Oversized MQTT frame');
-    while(this.buffer.length>=2){
-      const b=this.buffer;let n=0,mul=1,at=1;
-      while(true){if(at>=b.length)return;const x=b[at++];n+=(x&127)*mul;mul*=128;if(at>5||n>590000)throw Error('Bad MQTT frame');if(!(x&128))break;}
-      if(b.length<at+n)return;
-      const kind=b[0],body=b.slice(at,at+n);this.buffer=b.slice(at+n);
-      if(kind>>4===2){
-        if(body.length!==2||body[1]!==0)throw Error('Broker rejected connection');
-        this.ws.send(frame(0x82,concat(u16(1),str(this.config.topic+'/'+this.inbound),new Uint8Array([1]))));
-      }else if(kind>>4===9){
-        if(body[2]===128)throw Error('Broker rejected subscription');
-        this.connected=true;this.failures=0;this.onState('connected');
-      }else if(kind>>4===3){
-        const len=body[0]*256+body[1],topic=dec.decode(body.slice(2,2+len));let offset=2+len;
-        if(kind&6){this.ws.send(frame(0x40,body.slice(offset,offset+2)));offset+=2;}
-        if(topic!==this.config.topic+'/'+this.inbound)continue;
-        let value;
-        try{value=await this.crypto.open(body.slice(offset),this.inbound,Date.now()+(this.clockOffset||0));}catch{continue;}
-        if(ws!==this.ws)return;
-        if(this.requireStatus&&(typeof value.boot_id!=='string'||!value.status||typeof value.status!=='object'))continue;
-        // Consumers compare local elapsed times; authenticate against network time.
-        this.onPacket({...value,source_sent_at:value.sent_at,sent_at:value.sent_at-(this.clockOffset||0)});
-      }
-    }
+  resume(){
+    if(this.closed)return;
+    if(!this.connected||Date.now()-this.lastRxAt>20000)this.reconnect();else void this.syncClock(true);
+  }
+  async receive(payload,client=this.client,epoch=this.epoch){
+    if(this.closed||client!==this.client||epoch!==this.epoch)return;
+    let value;
+    try{value=await this.crypto.open(payload,this.inbound,Date.now()+(this.clockOffset||0));}catch{return;}
+    if(this.closed||client!==this.client||epoch!==this.epoch)return;
+    if(this.requireStatus&&(typeof value.boot_id!=='string'||!value.status||typeof value.status!=='object'))return;
+    this.onPacket({...value,source_sent_at:value.sent_at,sent_at:value.sent_at-(this.clockOffset||0)});
   }
   async send(command=null,acknowledged=[]){return this.sendPacket({command,acknowledged});}
   async sendPacket(value){
-    if(!this.connected||this.ws?.readyState!==WebSocket.OPEN)throw Error('连接尚未就绪');
-    const ws=this.ws;
-    const offset=this.clockOffset||0;
-    const command=value.command&&Number.isFinite(value.command.expires_at)?{...value.command,expires_at:value.command.expires_at+offset}:value.command;
-    const payload=await this.crypto.seal({...value,...(value.command?{command}:{}),sent_at:Date.now()+offset},this.outbound);
-    if(ws!==this.ws||!this.connected||ws.readyState!==WebSocket.OPEN)throw Error('连接已改变，正在重试');
+    const started=performance.now();
+    const ttl=value.command?value.command.expires_at-Date.now():Infinity;
+    if(value.command&&(!Number.isFinite(ttl)||ttl<=0))throw Error('指令已经过期，请重新发送。');
+    if(this.clockPending)await this.clockRequest;
+    const client=this.client,epoch=this.epoch;
+    if(this.closed||!this.connected||!client?.connected)throw Error('连接尚未就绪');
+    const remaining=()=>ttl-(performance.now()-started);
+    if(remaining()<=0)throw Error('指令已经过期，请重新发送。');
+    const networkNow=Date.now()+(this.clockOffset||0);
+    const command=value.command?{...value.command,expires_at:networkNow+remaining()}:value.command;
+    const payload=await this.crypto.seal({...value,...(value.command?{command}:{}),sent_at:networkNow},this.outbound);
+    if(this.closed||client!==this.client||epoch!==this.epoch||!this.connected||!client.connected)throw Error('连接已改变，正在重试');
+    if(remaining()<=0)throw Error('指令已经过期，请重新发送。');
     if(payload.length>580000)throw Error('消息过大，请降低截图尺寸。');
-    this.sequence=this.sequence%65535+1;
-    this.ws.send(frame(0x32,concat(str(this.config.topic+'/'+this.outbound),u16(this.sequence),payload)));
+    return new Promise((resolve,reject)=>{
+      let settled=false;
+      const pending={id:null,finish:(error,remove=false,ack=null)=>{
+        if(settled)return;settled=true;clearTimeout(pending.timer);this.pendingPublishes.delete(pending);
+        if(remove&&pending.id!==null)try{client.removeOutgoingMessage(pending.id);}catch{}
+        if(error)reject(error);else resolve({messageId:pending.id,brokerAcceptedAt:Date.now(),ack});
+      }};
+      this.pendingPublishes.add(pending);
+      pending.timer=setTimeout(()=>pending.finish(Error('服务器确认超时，尚不能确认指令送达。'),true),Math.max(1,Math.min(this.publishTimeoutMs,remaining())));
+      try{
+        // MQTT.js invokes the QoS 1 callback only after PUBACK. The app owns
+        // retries by command id; cancelled publishes must not survive reconnect.
+        client.publish(this.config.topic+'/'+this.outbound,payload,{qos:1,retain:false},(error,ack)=>{
+          if(error){pending.finish(Error('服务器未确认收到指令：'+String(error.message||error).slice(0,100)),true);return;}
+          if(this.closed||client!==this.client||epoch!==this.epoch){pending.finish(Error('连接已改变，无法确认送达。'),true);return;}
+          pending.finish(null,false,ack);
+        });
+        pending.id=client.getLastMessageId();
+        if(!Number.isInteger(pending.id)||pending.id<1)pending.finish(Error('无法跟踪服务器确认。'),true);
+      }catch(error){pending.finish(error,true);}
+    });
   }
-  close(){this.closed=true;clearTimeout(this.retry);clearTimeout(this.deadline);clearInterval(this.ping);this.connected=false;this.ws?.close();}
+  close(){
+    if(this.closed)return;this.closed=true;clearTimeout(this.retry);clearInterval(this.monitor);
+    this.invalidate('连接已关闭。');const old=this.client;this.client=null;old?.end(true);
+  }
 }

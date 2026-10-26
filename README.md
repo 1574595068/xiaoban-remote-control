@@ -64,3 +64,9 @@ checks use timestamps converted into the browser's time frame. This avoids rejec
 fresh board heartbeats when a phone's clock is ahead. Reopening a page expires old
 instructions that had never been sent, so they cannot block a new action or execute
 unexpectedly. Already-sent requests retain their IDs and receipts.
+
+Browser MQTT uses the locally bundled MIT-licensed MQTT.js 5.16.1; provenance and
+license are checked in alongside the bundle. QoS 1 publication waits for broker PUBACK.
+The UI separately records attempts, broker acceptance and authenticated device receipts.
+Broker acceptance does not mean that the board executed the request or the PC booted.
+Failed clock probes are retried after reconnect and foreground resume.

@@ -1,5 +1,5 @@
-import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.9';
-import {attachComputer} from './computer-ui.mjs?v=20261026.9';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261027.1';
+import {attachComputer} from './computer-ui.mjs?v=20261027.1';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
 const BUILD=document.documentElement.dataset.build;
 const labels={pc_wake:'发送电脑唤醒包',pc_list:'读取电脑列表',pc_save:'保存电脑配置',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
@@ -32,15 +32,16 @@ function requestBoard(kind,payload){
 async function sendDiagnostic(event){
   if(!channel?.connected)return;
   try{await channel.sendPacket({client_diagnostic:{event,page_build:BUILD,board_heartbeat_at:device?.sent_at??null,
-    pending_kind:pending()?.kind??null,browser_online:navigator.onLine,clock_offset_ms:channel.clockOffset,clock_synchronized:channel.clockSynchronized}});}catch{}
+    pending_kind:pending()?.kind??null,browser_online:navigator.onLine,clock_offset_ms:channel.clockOffset,clock_synchronized:channel.clockSynchronized,recent_wakes:commands.filter(c=>c.kind==='pc_wake').slice(-5).map(diagnosticCommand)}});}catch{}
 }
 async function pump(){
   const command=pending();
   if(!command||sending||!channel?.connected||!online()||!device.ready||Date.now()-lastSent<5000)return;
-  sending=true;
+  sending=true;lastSent=Date.now();command.firstAttemptAt??=lastSent;command.lastAttemptAt=lastSent;command.attempts=(command.attempts||0)+1;save();renderDelivery();
   try{
     await channel.send({id:command.id,kind:command.kind,payload:command.payload,expires_at:command.expiresAt,source_build:BUILD});
-    lastSent=Date.now();command.firstSentAt??=lastSent;command.lastSentAt=lastSent;command.clockOffset=channel.clockOffset||0;command.attempts=(command.attempts||0)+1;command.status='running';save();renderCommands();
+    const acceptedAt=Date.now();command.firstSentAt??=acceptedAt;command.lastSentAt=acceptedAt;command.brokerAcceptedAt=acceptedAt;command.clockOffset=channel.clockOffset||0;
+    if(command.status==='queued')command.status='running';save();renderCommands();
   }catch{error('连接暂时中断，恢复后会自动重试同一条指令。');}
   finally{sending=false;}
 }
@@ -69,6 +70,7 @@ function diagnosticCommand(c){
   const offset=c.clockOffset??channel?.clockOffset??0,stamp=t=>t?t+offset:null;
   return {id:c.id,kind:c.kind,computer_id:c.payload?.computer_id,status:c.status,created_at:stamp(c.createdAt),
     first_sent_at:stamp(c.firstSentAt),last_sent_at:stamp(c.lastSentAt),attempts:c.attempts||0,
+    first_attempt_at:stamp(c.firstAttemptAt),broker_accepted_at:stamp(c.brokerAcceptedAt),
     receipt_received_at:stamp(c.receiptAt),board_completed_at:c.completedAt??null,packets_sent:c.result?.packets_sent??null};
 }
 function deliveryReport(){
@@ -85,16 +87,17 @@ function renderDelivery(){
   const report=deliveryReport(),last=report.commands.at(-1),wake=report.board_last_wake;
   const stamp=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'尚无记录';
   const rows=[['网页版本',BUILD],['手机／网页连接',channelState==='connected'?'已连接':navigator.onLine?'正在重连':'当前设备没有网络'],
-    ['时间校准',report.clock_synchronized?'已自动校准':'尚未校准'],
+    ['时间校准',report.clock_synchronized?'已自动校准':'校准暂未成功，正在自动重试'],
     ['板子心跳',stamp(report.board_heartbeat_at)],['本页最近点击',last?stamp(last.created_at)+' · '+last.computer_id:'尚无开机操作'],
-    ['本页发出指令',last?.first_sent_at?stamp(last.first_sent_at)+' · '+last.attempts+' 次尝试':last?'尚未发出，请等板子连接':'尚无记录'],
+    ['本页发送尝试',last?.attempts?last.attempts+' 次':last?'等待连接后发送':'尚无记录'],
+    ['服务器接收确认',last?.broker_accepted_at?stamp(last.broker_accepted_at):last?.first_sent_at?'旧版记录，没有服务器确认':last?.attempts?'尚未确认，正在重试':'尚无记录'],
     ['收到执行回执',stamp(last?.receipt_received_at)],
     ['板子最近执行',wake?(wake.completed_at?stamp(wake.completed_at):'旧记录，未记录执行时间')+' · '+(wake.computer_id||'未记录目标')+' · '+(wake.packets_sent??0)+' 个唤醒包':'尚无记录']];
   box.replaceChildren();for(const [label,value] of rows){const row=element('div');row.append(element('dt',label),element('dd',value));box.append(row);}
   $('delivery-build').textContent='网页 '+BUILD;
   const pendingWake=commands.find(c=>c.kind==='pc_wake'&&['queued','running'].includes(c.status)&&c.expiresAt>Date.now());
   $('delivery-progress').hidden=!pendingWake;
-  if(pendingWake)$('delivery-progress').textContent=pendingWake.firstSentAt?'网页已发出指令，正在等板子执行回执 · '+Math.floor((Date.now()-pendingWake.createdAt)/1000)+' 秒。':'指令尚未发出：'+(!channel?.connected?'网页连接未就绪':!online()?'还没收到板子在线心跳':'板子正在处理其他指令')+'。';
+  if(pendingWake)$('delivery-progress').textContent=pendingWake.brokerAcceptedAt?'服务器已接收，正在等板子执行回执 · '+Math.floor((Date.now()-pendingWake.createdAt)/1000)+' 秒。':sending?'正在等待服务器确认收到指令…':'正在等待发送：'+(!channel?.connected?'网页连接未就绪':!online()?'还没收到板子在线心跳':!device?.ready?'板子正在处理其他指令':'连接恢复后自动重试')+'。';
 }
 function speak(text){
   if(!window.speechSynthesis){error('当前浏览器不支持朗读，请使用系统浏览器。');return;}
@@ -139,7 +142,7 @@ async function received(packet,pair){
     const waiter=boardWaiters.get(receipt.id);
     if(waiter){boardWaiters.delete(receipt.id);if(receipt.state==='done')waiter.resolve(receipt.result||{});else waiter.reject(Error(receipt.result?.error||'板子执行失败。'));}
   }
-  if(ack.length)try{await channel.send(null,ack);}catch{}
+  if(ack.length)void channel.send(null,ack).catch(()=>{});
   if(changed){save();renderCommands();error();}else renderStatus();
   void pump();
 }
@@ -154,7 +157,7 @@ async function start(){
     const config=decodePair(pair);
     $('gate').hidden=true;$('control').hidden=false;
     computerUI=await attachComputer(config,{requestBoard,selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click(),boardState:()=>({online:online()&&!!channel?.connected,ready:!!device?.ready,pending:labels[pending()?.kind]}),previousSaves:commands.filter(c=>c.kind==='pc_save')});
-    channel=new DeviceChannel(config,{onPacket:p=>{void received(p,pair).catch(()=>error('消息处理暂时失败，正在重新连接。'));},onState:s=>{channelState=s;renderStatus();if(s==='connected')void sendDiagnostic('connected');}});
+    channel=new DeviceChannel(config,{onPacket:p=>{void received(p,pair).catch(()=>error('消息处理暂时失败，正在重新连接。'));},onState:s=>{channelState=s;renderStatus();if(s==='connected')void sendDiagnostic('connected');},onClock:()=>{renderStatus();void sendDiagnostic('clock_checked');}});
     await channel.start();
     gateTimer=setTimeout(()=>{$('gate-title').textContent='正在等待小伴上线';$('gate-text').textContent='请确认板子保持供电和联网。页面会自动重连，专属钥匙仍然保留。';$('retry').hidden=false;},16000);
   }catch(e){$('gate-title').textContent='连接还差一步';$('gate-text').textContent=e.message||'暂时连接不上，请重试。';$('retry').hidden=false;}
@@ -180,7 +183,7 @@ $('save-memory').onclick=()=>{const text=$('memory-draft').value.trim();if(text&
 setInterval(()=>{
   let changed=false;for(const c of commands)if(['queued','running'].includes(c.status)&&c.expiresAt<Date.now()){
     c.status='expired';changed=true;
-    const detail=c.firstSentAt?'指令已从网页发出，但未收到板子执行回执，不能确认已发送唤醒包。':'指令未从此网页发出，请在“连接与发送记录”中重新连接后重试。';
+    const detail=c.brokerAcceptedAt?'服务器已接收，但没有收到板子执行回执，不能确认已发送唤醒包。':c.attempts?'发送尝试未获得服务器确认，请检查手机网络后重试。':'指令尚未发送，请在“连接与发送记录”中检查板子连接。';
     c.result={error:'等待超时。'+detail};
     const waiter=boardWaiters.get(c.id);if(waiter){boardWaiters.delete(c.id);waiter.reject(Error(c.result.error));}
   }
