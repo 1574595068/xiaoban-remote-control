@@ -50,3 +50,11 @@ Computer controls require extension v2 and a separately enrolled companion on ea
 The old single-computer channel is intentionally not used by v2.
 The public broker has no uptime guarantee. HTTPS and WSS internet access are required;
 the service worker only caches the static page, not a connection to an offline device.
+
+Delivery diagnostics distinguish browser submission, first transmission, board execution
+and receipt arrival. Firmware stores execution times in the existing bounded journal;
+the latest wake summary remains visible after receipt acknowledgement or a board reboot.
+Older receipts without timestamps are labelled as old records. These timestamps do not
+prove that the computer powered on. Diagnostic exports exclude keys, chat and images.
+The transport reconnects silent sockets and checks connection freshness on foreground
+resume; queued commands keep their original ID and expiry across reconnects.

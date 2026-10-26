@@ -46,29 +46,42 @@ export async function codec(config) {
 export class DeviceChannel {
   constructor(config,{onPacket=()=>{},onState=()=>{},inbound='device',outbound='server',requireStatus=true}={}) {
     this.config=config;this.onPacket=onPacket;this.onState=onState;this.inbound=inbound;this.outbound=outbound;this.requireStatus=requireStatus;this.buffer=new Uint8Array();
-    this.chain=Promise.resolve();this.sequence=10;this.failures=0;this.closed=false;this.connected=false;
+    this.chain=Promise.resolve();this.sequence=10;this.failures=0;this.closed=false;this.connected=false;this.lastRxAt=0;
   }
   async start(){this.crypto=await codec(this.config);this.connect();}
   connect(){
     if(this.closed)return;
-    this.onState('connecting');this.buffer=new Uint8Array();
+    this.connected=false;this.onState('connecting');this.buffer=new Uint8Array();this.lastRxAt=Date.now();
     const ws=this.ws=new WebSocket('wss://broker.emqx.io:8084/mqtt','mqtt');
     ws.binaryType='arraybuffer';
-    const deadline=setTimeout(()=>{if(!this.connected)ws.close();},12000);
+    this.deadline=setTimeout(()=>{if(ws===this.ws&&!this.connected)ws.close();},12000);
     ws.onopen=()=>ws.send(frame(0x10,concat(new Uint8Array([0,4,77,81,84,84,4,2,0,30]),str('xb-web-'+crypto.randomUUID().replace(/-/g,'').slice(0,16)))));
     ws.onmessage=e=>{
-      this.chain=this.chain.then(()=>this.receive(new Uint8Array(e.data))).catch(()=>{if(ws===this.ws)ws.close();});
+      if(ws!==this.ws)return;this.lastRxAt=Date.now();
+      this.chain=this.chain.then(()=>this.receive(new Uint8Array(e.data),ws)).catch(()=>{if(ws===this.ws)ws.close();});
     };
     ws.onerror=()=>ws.close();
     ws.onclose=()=>{
-      clearTimeout(deadline);clearInterval(this.ping);this.connected=false;
+      if(ws!==this.ws)return;
+      clearTimeout(this.deadline);clearInterval(this.ping);this.connected=false;
       if(this.closed)return;
       this.onState('reconnecting');
       this.retry=setTimeout(()=>this.connect(),Math.min(30000,1000*2**Math.min(this.failures++,5)));
     };
-    this.ping=setInterval(()=>{if(ws.readyState===WebSocket.OPEN)ws.send(new Uint8Array([0xc0,0]));},15000);
+    this.ping=setInterval(()=>{
+      if(ws!==this.ws)return;
+      if(Date.now()-this.lastRxAt>45000){this.reconnect();return;}
+      if(ws.readyState===WebSocket.OPEN)ws.send(new Uint8Array([0xc0,0]));
+    },15000);
   }
-  async receive(part){
+  reconnect(){
+    if(this.closed||!this.crypto)return;
+    clearTimeout(this.retry);clearTimeout(this.deadline);clearInterval(this.ping);
+    const old=this.ws;this.ws=null;this.connected=false;old?.close();this.connect();
+  }
+  resume(){if(!this.closed&&(!this.connected||Date.now()-this.lastRxAt>20000))this.reconnect();}
+  async receive(part,ws=this.ws){
+    if(ws!==this.ws)return;
     this.buffer=concat(this.buffer,part);
     if(this.buffer.length>600000)throw Error('Oversized MQTT frame');
     while(this.buffer.length>=2){
@@ -88,6 +101,7 @@ export class DeviceChannel {
         if(topic!==this.config.topic+'/'+this.inbound)continue;
         let value;
         try{value=await this.crypto.open(body.slice(offset),this.inbound);}catch{continue;}
+        if(ws!==this.ws)return;
         if(this.requireStatus&&(typeof value.boot_id!=='string'||!value.status||typeof value.status!=='object'))continue;
         this.onPacket(value);
       }
@@ -96,10 +110,12 @@ export class DeviceChannel {
   async send(command=null,acknowledged=[]){return this.sendPacket({command,acknowledged});}
   async sendPacket(value){
     if(!this.connected||this.ws?.readyState!==WebSocket.OPEN)throw Error('连接尚未就绪');
+    const ws=this.ws;
     const payload=await this.crypto.seal({...value,sent_at:Date.now()},this.outbound);
+    if(ws!==this.ws||!this.connected||ws.readyState!==WebSocket.OPEN)throw Error('连接已改变，正在重试');
     if(payload.length>580000)throw Error('消息过大，请降低截图尺寸。');
     this.sequence=this.sequence%65535+1;
     this.ws.send(frame(0x32,concat(str(this.config.topic+'/'+this.outbound),u16(this.sequence),payload)));
   }
-  close(){this.closed=true;clearTimeout(this.retry);clearInterval(this.ping);this.connected=false;this.ws?.close();}
+  close(){this.closed=true;clearTimeout(this.retry);clearTimeout(this.deadline);clearInterval(this.ping);this.connected=false;this.ws?.close();}
 }
