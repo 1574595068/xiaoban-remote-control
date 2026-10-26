@@ -1,4 +1,4 @@
-import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.4';
+import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.5';
 const $=id=>document.getElementById(id);
 export function classifyComputerRequest(text){
   text=text.trim();
@@ -11,14 +11,43 @@ export function classifyComputerRequest(text){
   if(capture&&/连连控/.test(text))return 'capture_asklink';
   return null;
 }
-export async function attachComputer(base,{requestBoard,selectTab}){
-  let profiles=[],revision=-1,editorRevision=-1,selected='',client=null,running=false,closed=false,sequence=0,dirty=false,draft=null;
+export async function attachComputer(base,{requestBoard,selectTab,boardState=()=>({online:true,ready:true}),previousSaves=[]}){
+  let profiles=[],revision=-1,editorRevision=-1,editorBase=null,selected='',client=null,running=false,saving=false,closed=false,sequence=0,dirty=false,draft=null,conflict=false,saveState='',saveStarted=0;
+  const DRAFTS='xiaoban.computer.edits.v1';let edits={};
+  const validEdit=(id,e)=>validComputerId(id)&&e?.profile?.id===id&&typeof e.profile.name==='string'&&e.profile.name.length<=60&&typeof e.profile.mac==='string'&&e.profile.mac.length<=32&&['local','other','unconfirmed'].includes(e.profile.wake_scope);
+  try{
+    const saved=JSON.parse(localStorage.getItem(DRAFTS)||'null');
+    if(saved?.board===base.topic&&saved.edits&&typeof saved.edits==='object')edits=Object.fromEntries(Object.entries(saved.edits).filter(([id,e])=>validEdit(id,e)).slice(0,8));
+  }catch{}
+  const seen=new Set();
+  for(const command of [...previousSaves].reverse()){
+    const p=command.payload?.profile;if(!p||seen.has(p.id))continue;seen.add(p.id);
+    if(command.status!=='done'&&!edits[p.id]&&validEdit(p.id,{profile:p}))edits[p.id]={profile:p,revision:command.payload.revision};
+  }
   const clients=new Set();
   function current(){return profiles.find(p=>p.id===selected);}
+  function same(a,b){return !!a&&!!b&&['id','name','wake_scope'].every(k=>a[k]===b[k])&&String(a.mac).replace(/[-:\s]/g,'').toUpperCase()===String(b.mac).replace(/[-:\s]/g,'').toUpperCase();}
+  function fields(){return {id:selected,name:$('pc-name').value.trim(),mac:$('pc-mac').value.trim().toUpperCase(),wake_scope:$('pc-network').value};}
+  function persist(){try{localStorage.setItem(DRAFTS,JSON.stringify({board:base.topic,edits}));}catch{}}
+  function rememberEdit(){if(!selected)return;edits[selected]={profile:fields(),base:editorBase,revision:editorRevision};persist();}
+  function feedback(text,state=''){
+    saveState=state;$('pc-settings-result').textContent=text;$('pc-settings-result').dataset.state=state;renderSave();
+  }
+  function renderSave(){
+    const state=boardState(),button=$('pc-save');
+    button.setAttribute('aria-busy',String(saving));
+    if(saving){
+      const elapsed=Math.floor((Date.now()-saveStarted)/1000);
+      button.textContent=state.online?(state.ready?'正在保存…':'等待板子处理…'):'等待板子连接…';
+      $('pc-settings-result').textContent=(state.online?(state.ready?'正在等板子确认保存':'板子正在处理其他指令，稍后自动保存'):'板子暂时没有连接，联网后自动保存')+' · 已等待 '+elapsed+' 秒。填写内容已保留。';
+    }else button.textContent=running?'等待当前操作完成…':!current()?'等待板子读取配置…':conflict?'确认保存我的填写':saveState==='success'?'已保存到板子':saveState==='error'?'重试保存':'保存到板子';
+    $('pc-save-hint').textContent=running&&!saving?'当前电脑操作尚未结束，结束后才能保存。':!current()?'连接板子后会显示已保存的电脑。':state.pending&&!saving?'板子正在处理「'+state.pending+'」。填写内容会保留，请等它完成后保存。':'';
+  }
   function message(text){$('pc-result').textContent=text;}
   function busy(value){
     running=value;$('pc-target').disabled=value||!profiles.length;
     for(const b of document.querySelectorAll('[data-pc-action],#pc-save,#pc-add,#pc-import,#pc-name,#pc-mac,#pc-network,#pc-use-detected,#pc-export'))b.disabled=value||!current();
+    $('pc-use-saved').disabled=value;$('pc-use-saved').hidden=!dirty;renderSave();
   }
   function renderStatus(){
     const p=current();if(!p)return;
@@ -31,8 +60,15 @@ export async function attachComputer(base,{requestBoard,selectTab}){
   }
   function fill(){
     const p=current();if(!p)return;
-    $('pc-name').value=p.name;$('pc-mac').value=p.mac;$('pc-network').value=p.wake_scope;
-    editorRevision=revision;dirty=false;$('pc-settings-result').textContent='';
+    const edit=edits[selected],alreadySaved=edit&&same(edit.profile,p);
+    if(alreadySaved){delete edits[selected];persist();}
+    const restored=edits[selected],value=restored?.profile||p;
+    $('pc-name').value=value.name;$('pc-mac').value=value.mac;$('pc-network').value=value.wake_scope;
+    editorBase=restored?restored.base:{...p};editorRevision=restored?restored.revision:revision;dirty=!!restored;
+    conflict=dirty&&!same(editorBase,p)&&editorBase!==null;
+    if(dirty&&!conflict)editorRevision=revision;
+    feedback(conflict?'这台电脑的板上配置已改变。你的填写已保留，请核对后再保存。':dirty?'已恢复尚未保存的填写。核对后点击保存到板子。':alreadySaved?'已从板子读回并核对：你的填写已保存。':'',conflict?'error':alreadySaved?'success':'');
+    $('pc-use-saved').hidden=!dirty;
   }
   async function switchTo(id){
     const p=profiles.find(p=>p.id===id);if(!p||running)return;
@@ -48,6 +84,10 @@ export async function attachComputer(base,{requestBoard,selectTab}){
   function applyProfiles(status){
     if(!Array.isArray(status?.computer_profiles)||!Number.isInteger(status.computer_revision)||status.computer_revision<revision)return;
     const incoming=status.computer_profiles.filter(p=>validComputerId(p.id)&&typeof p.name==='string'&&p.name.length<=30&&typeof p.mac==='string'&&['local','other','unconfirmed'].includes(p.wake_scope)).slice(0,8);
+    for(const edit of Object.values(edits)){
+      const p=edit?.profile;
+      if(p&&validComputerId(p.id)&&typeof p.name==='string'&&p.name.length<=60&&!incoming.some(x=>x.id===p.id)&&incoming.length<8)incoming.push({...p});
+    }
     if(draft&&!incoming.some(p=>p.id===draft.id)&&incoming.length<8)incoming.push(draft);
     if(!incoming.length)return;
     if(JSON.stringify(incoming)===JSON.stringify(profiles)&&revision===status.computer_revision)return;
@@ -57,7 +97,21 @@ export async function attachComputer(base,{requestBoard,selectTab}){
     if(!profiles.some(p=>p.id===selected)){
       let saved;try{saved=localStorage.getItem('xiaoban.computer.selected.v2');}catch{}
       void switchTo(profiles.some(p=>p.id===saved)?saved:profiles[0].id);
-    }else{select.value=selected;if(!dirty&&!running)fill();}
+    }else{
+      select.value=selected;
+      if(dirty&&!saving){
+        const p=current();
+        if(same(fields(),p)){fill();}
+        else {
+          conflict=!same(editorBase,p)&&editorBase!==null;
+          if(!conflict){editorRevision=revision;rememberEdit();}
+          else feedback('这台电脑的板上配置已改变。你的填写已保留，请核对后点击“确认保存我的填写”。','error');
+        }
+      }else if(!dirty&&!running){
+        const result=$('pc-settings-result').textContent,state=saveState;fill();
+        if(result)feedback(result,state);
+      }
+    }
     busy(running);renderStatus();
   }
   async function waitOnline(target,deadline){
@@ -102,18 +156,23 @@ export async function attachComputer(base,{requestBoard,selectTab}){
     finally{busy(false);renderStatus();}
   }
   $('pc-target').onchange=()=>void switchTo($('pc-target').value);
-  for(const id of ['pc-name','pc-mac','pc-network'])$(id).oninput=()=>{dirty=true;};
+  function changed(){
+    dirty=true;for(const id of ['pc-name','pc-mac','pc-network'])$(id).removeAttribute('aria-invalid');
+    rememberEdit();$('pc-use-saved').hidden=false;
+    feedback(conflict?'板上配置已改变，你的填写已保留。核对后确认保存。':'有未保存的修改，点击下方按钮保存到板子。',conflict?'error':'');
+  }
+  for(const id of ['pc-name','pc-mac','pc-network'])$(id).oninput=changed;
   $('pc-add').onclick=()=>{
     if(running||profiles.length>=8)return;
     const id='pc-'+crypto.randomUUID().slice(0,12),name='电脑'+(profiles.length+1);
     draft={id,name,mac:'',wake_scope:'unconfirmed'};profiles.push(draft);
     const o=document.createElement('option');o.value=id;o.textContent=name+'（待保存）';$('pc-target').append(o);
-    void switchTo(id);$('pc-settings').open=true;
+    void switchTo(id);editorBase=null;dirty=true;rememberEdit();$('pc-use-saved').hidden=false;$('pc-settings').open=true;
   };
   $('pc-use-detected').onclick=()=>{
     const s=client?.last?.status;if(!client?.online()||!s?.ethernet_mac)return;
-    $('pc-mac').value=s.ethernet_mac;dirty=true;
-    $('pc-settings-result').textContent='已填入当前电脑助手检测到的网卡。确认网络位置后，点击保存。';
+    $('pc-mac').value=s.ethernet_mac;changed();
+    feedback('已填入当前电脑助手检测到的网卡。确认网络位置后，点击保存。');
   };
   $('pc-import').onchange=async()=>{
     const file=$('pc-import').files?.[0];if(!file)return;
@@ -121,22 +180,51 @@ export async function attachComputer(base,{requestBoard,selectTab}){
       if(file.size>8192)throw Error('电脑信息文件过大。');
       const data=JSON.parse(await file.text());
       if(data.id!==selected||typeof data.mac!=='string'||!/^(?:[0-9A-F]{2}-){5}[0-9A-F]{2}$/i.test(data.mac))throw Error('文件不属于当前选择的电脑，请先选择正确的电脑。');
-      $('pc-mac').value=data.mac.toUpperCase();dirty=true;
-      $('pc-settings-result').textContent='已读取网卡信息。确认网络位置后，点击保存。';
-    }catch(e){$('pc-settings-result').textContent=e.message;}
+      $('pc-mac').value=data.mac.toUpperCase();changed();
+      feedback('已读取网卡信息。确认网络位置后，点击保存。');
+    }catch(e){feedback(e.message,'error');}
     finally{$('pc-import').value='';}
   };
-  $('pc-save').onclick=async()=>{
+  $('pc-use-saved').onclick=()=>{
     if(running)return;
-    const p=current();if(!p)return;
-    const profile={id:p.id,name:$('pc-name').value.trim(),mac:$('pc-mac').value.trim().toUpperCase(),wake_scope:$('pc-network').value};
-    busy(true);$('pc-settings-result').textContent='正在保存到板子…';
+    if(editorBase===null){feedback('这台电脑还没有保存在板子上，请先填写网卡地址并保存。');return;}
+    delete edits[selected];persist();fill();busy(false);
+  };
+  function validated(){
+    const profile=fields(),raw=profile.mac.replace(/[-:\s]/g,'');
+    function invalid(id,text){$(id).setAttribute('aria-invalid','true');$(id).focus();throw Error(text);}
+    if(!profile.name||Array.from(profile.name).length>30||/[\x00-\x1f]/.test(profile.name))invalid('pc-name','请填写 1 到 30 个字的电脑名称。');
+    if(!raw)invalid('pc-mac','还没有填写有线网卡地址。请在这台电脑运行接入包，然后导入“电脑信息.json”或使用检测到的网卡。');
+    if(!/^[0-9A-F]{12}$/.test(raw)||raw==='000000000000'||(parseInt(raw.slice(0,2),16)&1))invalid('pc-mac','网卡地址不正确，请填写有线网卡的 MAC 地址，例如 AA-BB-CC-DD-EE-10。');
+    profile.mac=raw.match(/../g).join('-');
+    if(profiles.some(p=>p.id!==selected&&p.mac===profile.mac))invalid('pc-mac','这个网卡已用于另一台电脑。请填写当前所选电脑的有线网卡地址。');
+    if(profiles.some(p=>p.id!==selected&&p.name===profile.name))invalid('pc-name','这个名称已用于另一台电脑，请换一个名称。');
+    return profile;
+  }
+  $('pc-save').onclick=async()=>{
+    if(running){renderSave();return;}
+    const p=current();if(!p){feedback('尚未读到板子的电脑列表，连接后再保存。','error');return;}
+    let profile;
+    try{profile=validated();}catch(e){dirty=true;rememberEdit();feedback(e.message,'error');return;}
+    dirty=true;rememberEdit();saving=true;saveStarted=Date.now();busy(true);feedback('正在保存到板子…');
     try{
-      const result=await requestBoard('pc_save',{profile,revision:editorRevision});
-      dirty=false;draft=null;applyProfiles(result);editorRevision=revision;
-      $('pc-settings-result').textContent=result.text;message(result.text);
-    }catch(e){$('pc-settings-result').textContent=e.message;}
-    finally{busy(false);renderStatus();}
+      let result;
+      try{result=await requestBoard('pc_save',{profile,revision:conflict?revision:editorRevision});}
+      catch(e){
+        if(!/配置已在其他页面更新/.test(e.message))throw e;
+        const latest=await requestBoard('pc_list',{});applyProfiles(latest);
+        const actual=latest.computer_profiles?.find(x=>x.id===profile.id);
+        if(same(actual,profile))result=latest;
+        else if(same(actual,editorBase))result=await requestBoard('pc_save',{profile,revision:latest.computer_revision});
+        else {conflict=true;throw Error('另一页面刚修改了这台电脑。你的填写已保留，核对后点击“确认保存我的填写”，或使用板子上的配置。');}
+      }
+      if(!Number.isInteger(result.computer_revision)||!same(result.computer_profiles?.find(x=>x.id===profile.id),profile))throw Error('板子返回的配置与填写不一致，尚未确认保存。内容已保留，请重试。');
+      delete edits[selected];persist();dirty=false;conflict=false;draft=null;applyProfiles(result);editorRevision=revision;editorBase={...profile};
+      $('pc-mac').value=profile.mac;saving=false;
+      const text='「'+profile.name+'」已保存到板子，并已核对网卡地址 '+profile.mac+'。';
+      feedback(text,'success');message(text);
+    }catch(e){saving=false;rememberEdit();feedback(e.message||'保存失败，填写内容已保留，请重试。','error');}
+    finally{saving=false;busy(false);renderStatus();}
   };
   $('pc-export').onclick=async()=>{
     if(running)return;
@@ -150,6 +238,7 @@ export async function attachComputer(base,{requestBoard,selectTab}){
   busy(false);
   return {
     onBoard:packet=>applyProfiles(packet.status),
+    refresh:renderSave,
     close:()=>{closed=true;sequence++;for(const c of clients)c.close();clients.clear();},
     handleText:text=>{
       const action=classifyComputerRequest(text);if(!action)return false;

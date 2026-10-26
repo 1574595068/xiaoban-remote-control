@@ -1,5 +1,5 @@
-import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.4';
-import {attachComputer} from './computer-ui.mjs?v=20261026.4';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.5';
+import {attachComputer} from './computer-ui.mjs?v=20261026.5';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
 const labels={pc_wake:'发送电脑唤醒包',pc_list:'读取电脑列表',pc_save:'保存电脑配置',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
 const boardWaiters=new Map();
@@ -51,6 +51,7 @@ function renderStatus(){
     box.append(stats,actions);
   }
   $('send').disabled=!!pending();$('save-memory').disabled=!!pending();
+  computerUI?.refresh();
 }
 function speak(text){
   if(!window.speechSynthesis){error('当前浏览器不支持朗读，请使用系统浏览器。');return;}
@@ -109,7 +110,7 @@ async function start(){
     if(!crypto.subtle)throw Error('当前浏览器不支持安全连接，请用手机系统浏览器打开。');
     const config=decodePair(pair);
     $('gate').hidden=true;$('control').hidden=false;
-    computerUI=await attachComputer(config,{requestBoard,selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click()});
+    computerUI=await attachComputer(config,{requestBoard,selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click(),boardState:()=>({online:online()&&!!channel?.connected,ready:!!device?.ready,pending:labels[pending()?.kind]}),previousSaves:commands.filter(c=>c.kind==='pc_save')});
     channel=new DeviceChannel(config,{onPacket:p=>{void received(p,pair).catch(()=>error('消息处理暂时失败，正在重新连接。'));},onState:s=>{channelState=s;renderStatus();}});
     await channel.start();
     gateTimer=setTimeout(()=>{$('gate-title').textContent='正在等待小伴上线';$('gate-text').textContent='请确认板子保持供电和联网。页面会自动重连，专属钥匙仍然保留。';$('retry').hidden=false;},16000);

@@ -15,6 +15,12 @@ request specifies a profile ID and its expected Ethernet MAC. Configuration writ
 revision checks; stale edits, duplicate MACs and unconfigured targets are rejected. The board
 acknowledges sending wake packets; that acknowledgement does not prove a successful boot.
 
+Computer settings show validation, pending, success and retry feedback beside Save.
+Unsaved edits stay in this browser across reloads. A successful save is checked against
+the profile returned by the board. Revision conflicts affecting another computer are
+refreshed and retried once; changes to the same computer preserve the draft and require
+an explicit choice before overwriting.
+
 The computer tab can wake the computer, open AskLink (连连控), and display an encrypted
 window screenshot. This requires the owner's separately installed Windows companion.
 Each computer has its own derived encryption/authentication keys and MQTT topic. Desktop

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-build="20261026.4"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://broker.emqx.io:8084; base-uri 'none'; form-action 'none'"><meta name="theme-color" content="#1c493b"><title>小伴 · 随时遥控</title><link rel="stylesheet" href="./style.css?v=20261026.4"><script type="module" src="./app.mjs?v=20261026.4"></script></head>
+<html lang="zh-CN" data-build="20261026.5"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://broker.emqx.io:8084; base-uri 'none'; form-action 'none'"><meta name="theme-color" content="#1c493b"><title>小伴 · 随时遥控</title><link rel="stylesheet" href="./style.css?v=20261026.5"><script type="module" src="./app.mjs?v=20261026.5"></script></head>
 <body><header><a class="brand" href="./"><span class="logo">伴</span><span>小伴<small>随时连接</small></span></a><span class="account">免账号 · 专属遥控</span></header>
 <main><section id="gate" class="gate"><span class="logo big">伴</span><p class="eyebrow">YOUR DESK, ANYWHERE</p><h1 id="gate-title">正在连接你的小伴…</h1><p id="gate-text">无需登录任何账号。</p><button id="retry" class="primary" hidden>重新连接</button><noscript>请启用浏览器 JavaScript 后重新打开。</noscript></section>
 <section id="control" hidden><div class="intro"><div><p class="eyebrow">YOUR DESK, ANYWHERE</p><h1>人在哪里，小伴都在。</h1><p>问一句、记件事，或者看看办公室里的它。</p></div><span id="connection" class="pill">连接中</span></div><div id="error" role="alert" class="error" hidden></div>
@@ -16,11 +16,13 @@
 <figure id="pc-picture" hidden><img id="pc-image" alt="所选电脑返回的连连控窗口截图"><figcaption id="pc-caption"></figcaption></figure>
 <details id="pc-settings" class="pc-settings"><summary>配置与接入这台电脑</summary>
 <div class="pc-fields"><label for="pc-name">电脑名称</label><input id="pc-name" maxlength="30" autocomplete="off" placeholder="例如：办公室电脑">
-<label for="pc-mac">有线网卡 MAC 地址</label><input id="pc-mac" maxlength="17" autocomplete="off" spellcheck="false" placeholder="例如：AA-BB-CC-DD-EE-10">
+<label for="pc-mac">有线网卡 MAC 地址</label><input id="pc-mac" maxlength="32" autocomplete="off" spellcheck="false" placeholder="例如：AA-BB-CC-DD-EE-10" aria-describedby="pc-settings-result">
 <button id="pc-use-detected" type="button" hidden>使用这台电脑助手检测到的网卡</button>
 <label for="pc-network">电脑与板子的网络关系</label><select id="pc-network"><option value="unconfirmed">尚未确认</option><option value="local">接同一路由器的网线</option><option value="other">不同路由器或不同地点</option></select>
-<button id="pc-save" class="primary" type="button">保存到板子</button></div>
-<p id="pc-settings-result" class="pc-help" role="status"></p>
+<button id="pc-save" class="primary" type="button" disabled>正在读取板上配置…</button>
+<p id="pc-settings-result" class="pc-save-result" role="status" aria-live="polite" aria-atomic="true"></p>
+<p id="pc-save-hint" class="pc-help" role="status"></p>
+<button id="pc-use-saved" type="button" hidden>使用板子上的配置</button></div>
 <p class="pc-help">接入第二台 Windows 电脑：解压接入包，双击“安装此电脑”；回到本页，选中电脑2，使用检测到的网卡并保存。电脑名称可以自行修改。</p>
 <label class="pc-import-label" for="pc-import">也可以导入接入包生成的“电脑信息.json”</label><input id="pc-import" type="file" accept=".json,application/json">
 <button id="pc-export" type="button">下载此电脑的配对文件</button><p class="pc-help">更换接入包对应的电脑时，将这个配对文件放入包内再安装。每台电脑使用各自的文件。</p>
