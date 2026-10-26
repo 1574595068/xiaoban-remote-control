@@ -93,7 +93,9 @@ export class DeviceChannel {
   connect(){
     if(this.closed||this.client)return;
     this.onState('connecting');
-    const client=this.client=this.mqttConnect('wss://broker.emqx.io:8084/mqtt',{
+    const client=this.client=this.mqttConnect('wss://broker-cn.emqx.io:8084/mqtt',{
+      servers:[{host:'broker-cn.emqx.io',port:8084,protocol:'wss'},{host:'broker.emqx.io',port:8084,protocol:'wss'}],
+      path:'/mqtt',
       protocolVersion:4,clean:true,clientId:'xb-web-'+crypto.randomUUID().replace(/-/g,'').slice(0,16),
       keepalive:20,connectTimeout:12000,reconnectPeriod:2000,reconnectOnConnackError:true,forceNativeWebSocket:true,queueQoSZero:false,
       // Subscribe through MQTT.js after every CONNACK so readiness requires that
