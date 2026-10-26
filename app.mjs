@@ -1,8 +1,9 @@
 import {DeviceChannel,decodePair} from './transport.mjs';
+import {attachComputer} from './computer-ui.mjs';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
-const labels={chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
+const labels={pc_wake:'唤醒电脑',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
 const states={queued:'等待板子连接',running:'等待板子回复',done:'板子已完成',error:'执行失败',expired:'已超时'};
-let channel,device=null,channelState='connecting',sending=false,lastSent=0,gateTimer,commands=[];
+let computerUI;let channel,device=null,channelState='connecting',sending=false,lastSent=0,gateTimer,commands=[];
 try{const saved=JSON.parse(localStorage.getItem(HISTORY)||'[]');if(Array.isArray(saved))commands=saved.filter(c=>c&&typeof c.id==='string'&&labels[c.kind]&&Number.isFinite(c.createdAt)&&c.createdAt>Date.now()-7*86400000).slice(-100);}catch{}
 function save(){try{localStorage.setItem(HISTORY,JSON.stringify(commands.slice(-100)));}catch{}}
 function error(message=''){$('error').textContent=message;$('error').hidden=!message;}
@@ -88,7 +89,7 @@ async function received(packet,pair){
   void pump();
 }
 async function start(){
-  channel?.close();clearTimeout(gateTimer);$('retry').hidden=true;
+  computerUI?.close();channel?.close();clearTimeout(gateTimer);$('retry').hidden=true;
   $('gate-title').textContent='正在连接你的小伴…';$('gate-text').textContent='无需登录任何账号。';
   let pair=new URLSearchParams(location.hash.slice(1)).get('pair');
   if(!pair)try{pair=localStorage.getItem(PAIR);}catch{}
@@ -96,6 +97,7 @@ async function start(){
   try{
     if(!crypto.subtle)throw Error('当前浏览器不支持安全连接，请用手机系统浏览器打开。');
     const config=decodePair(pair);
+    computerUI=await attachComputer(config,{enqueueWake:()=>enqueue('pc_wake'),selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click()});
     channel=new DeviceChannel(config,{onPacket:p=>{void received(p,pair).catch(()=>error('消息处理暂时失败，正在重新连接。'));},onState:s=>{channelState=s;renderStatus();}});
     await channel.start();
     gateTimer=setTimeout(()=>{$('gate-title').textContent='正在等待小伴上线';$('gate-text').textContent='请确认板子保持供电和联网。页面会自动重连，专属钥匙仍然保留。';$('retry').hidden=false;},16000);
@@ -103,11 +105,11 @@ async function start(){
 }
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>{
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('selected',b===tab));
-  for(const id of ['chat','memory','activity','device'])$(id).hidden=id!==tab.dataset.tab;
+  for(const id of ['chat','memory','activity','device','computer'])$(id).hidden=id!==tab.dataset.tab;
   if(tab.dataset.tab==='memory'&&!commands.some(c=>Array.isArray(c.result?.items))&&!pending())enqueue('memories');
 };
 $('retry').onclick=()=>void start();
-function submit(){const text=$('draft').value.trim();if(text&&enqueue('chat',{text,search:$('search').checked}))$('draft').value='';}
+function submit(){const text=$('draft').value.trim();if(text&&computerUI?.handleText(text)){$('draft').value='';return;}if(text&&enqueue('chat',{text,search:$('search').checked}))$('draft').value='';}
 $('send').onclick=submit;$('draft').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit();}};
 $('clear').onclick=()=>{if(confirm('开始新对话？清空板子的对话上下文及本浏览器的已完成聊天记录，长期记忆保留。'))enqueue('clear');};
 $('read-memory').onclick=()=>enqueue('memories');

@@ -30,7 +30,7 @@ export async function codec(config) {
       return enc.encode(JSON.stringify({v:1,iv:hex(iv),c:hex(ciphertext),m:hex(signature)}));
     },
     async open(raw,direction='device',now=Date.now()) {
-      if(raw.length>100000)throw Error('Message too large');
+      if(raw.length>600000)throw Error('Message too large');
       const v=JSON.parse(dec.decode(raw));
       if(v.v!==1)throw Error('Unknown message version');
       const iv=bytes(v.iv),ciphertext=bytes(v.c),signature=bytes(v.m);
@@ -44,8 +44,8 @@ export async function codec(config) {
   };
 }
 export class DeviceChannel {
-  constructor(config,{onPacket=()=>{},onState=()=>{}}={}) {
-    this.config=config;this.onPacket=onPacket;this.onState=onState;this.buffer=new Uint8Array();
+  constructor(config,{onPacket=()=>{},onState=()=>{},inbound='device',outbound='server',requireStatus=true}={}) {
+    this.config=config;this.onPacket=onPacket;this.onState=onState;this.inbound=inbound;this.outbound=outbound;this.requireStatus=requireStatus;this.buffer=new Uint8Array();
     this.chain=Promise.resolve();this.sequence=10;this.failures=0;this.closed=false;this.connected=false;
   }
   async start(){this.crypto=await codec(this.config);this.connect();}
@@ -70,34 +70,36 @@ export class DeviceChannel {
   }
   async receive(part){
     this.buffer=concat(this.buffer,part);
-    if(this.buffer.length>300000)throw Error('Oversized MQTT frame');
+    if(this.buffer.length>600000)throw Error('Oversized MQTT frame');
     while(this.buffer.length>=2){
       const b=this.buffer;let n=0,mul=1,at=1;
-      while(true){if(at>=b.length)return;const x=b[at++];n+=(x&127)*mul;mul*=128;if(at>5||n>260000)throw Error('Bad MQTT frame');if(!(x&128))break;}
+      while(true){if(at>=b.length)return;const x=b[at++];n+=(x&127)*mul;mul*=128;if(at>5||n>590000)throw Error('Bad MQTT frame');if(!(x&128))break;}
       if(b.length<at+n)return;
       const kind=b[0],body=b.slice(at,at+n);this.buffer=b.slice(at+n);
       if(kind>>4===2){
         if(body.length!==2||body[1]!==0)throw Error('Broker rejected connection');
-        this.ws.send(frame(0x82,concat(u16(1),str(this.config.topic+'/device'),new Uint8Array([1]))));
+        this.ws.send(frame(0x82,concat(u16(1),str(this.config.topic+'/'+this.inbound),new Uint8Array([1]))));
       }else if(kind>>4===9){
         if(body[2]===128)throw Error('Broker rejected subscription');
         this.connected=true;this.failures=0;this.onState('connected');
       }else if(kind>>4===3){
         const len=body[0]*256+body[1],topic=dec.decode(body.slice(2,2+len));let offset=2+len;
         if(kind&6){this.ws.send(frame(0x40,body.slice(offset,offset+2)));offset+=2;}
-        if(topic!==this.config.topic+'/device')continue;
+        if(topic!==this.config.topic+'/'+this.inbound)continue;
         let value;
-        try{value=await this.crypto.open(body.slice(offset));}catch{continue;}
-        if(typeof value.boot_id!=='string'||!value.status||typeof value.status!=='object')continue;
+        try{value=await this.crypto.open(body.slice(offset),this.inbound);}catch{continue;}
+        if(this.requireStatus&&(typeof value.boot_id!=='string'||!value.status||typeof value.status!=='object'))continue;
         this.onPacket(value);
       }
     }
   }
-  async send(command=null,acknowledged=[]){
+  async send(command=null,acknowledged=[]){return this.sendPacket({command,acknowledged});}
+  async sendPacket(value){
     if(!this.connected||this.ws?.readyState!==WebSocket.OPEN)throw Error('连接尚未就绪');
-    const payload=await this.crypto.seal({sent_at:Date.now(),command,acknowledged});
+    const payload=await this.crypto.seal({...value,sent_at:Date.now()},this.outbound);
+    if(payload.length>580000)throw Error('消息过大，请降低截图尺寸。');
     this.sequence=this.sequence%65535+1;
-    this.ws.send(frame(0x32,concat(str(this.config.topic+'/server'),u16(this.sequence),payload)));
+    this.ws.send(frame(0x32,concat(str(this.config.topic+'/'+this.outbound),u16(this.sequence),payload)));
   }
   close(){this.closed=true;clearTimeout(this.retry);clearInterval(this.ping);this.connected=false;this.ws?.close();}
 }
