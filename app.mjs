@@ -1,7 +1,8 @@
-import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.3';
-import {attachComputer} from './computer-ui.mjs?v=20261026.3';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.4';
+import {attachComputer} from './computer-ui.mjs?v=20261026.4';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
-const labels={pc_wake:'唤醒电脑',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
+const labels={pc_wake:'发送电脑唤醒包',pc_list:'读取电脑列表',pc_save:'保存电脑配置',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
+const boardWaiters=new Map();
 const states={queued:'等待板子连接',running:'等待板子回复',done:'板子已完成',error:'执行失败',expired:'已超时'};
 let computerUI;let channel,device=null,channelState='connecting',sending=false,lastSent=0,gateTimer,commands=[];
 try{const saved=JSON.parse(localStorage.getItem(HISTORY)||'[]');if(Array.isArray(saved))commands=saved.filter(c=>c&&typeof c.id==='string'&&labels[c.kind]&&Number.isFinite(c.createdAt)&&c.createdAt>Date.now()-7*86400000).slice(-100);}catch{}
@@ -10,13 +11,18 @@ function error(message=''){$('error').textContent=message;$('error').hidden=!mes
 function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);if(cls)node.className=cls;return node;}
 function button(text,handler,cls='quiet'){const b=element('button',text,cls);b.onclick=handler;return b;}
 function time(value){return new Date(value).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});}
-function online(){return !!device&&Date.now()-device.sent_at<150000;}
+function online(){return !!device&&Date.now()-device.sent_at<30000;}
 function pending(){return commands.find(c=>['queued','running'].includes(c.status)&&c.expiresAt>Date.now());}
 function enqueue(kind,payload={}){
   if(pending()){error('小伴正在处理上一条指令，请稍等它回复。');return false;}
   error();
-  const now=Date.now();commands.push({id:crypto.randomUUID(),kind,payload,status:'queued',createdAt:now,expiresAt:now+600000,result:null});
-  commands=commands.filter(c=>c.createdAt>now-7*86400000).slice(-100);lastSent=0;save();renderCommands();void pump();return true;
+  const now=Date.now(),id=crypto.randomUUID();commands.push({id,kind,payload,status:'queued',createdAt:now,expiresAt:now+(kind.startsWith('pc_')?90000:600000),result:null});
+  commands=commands.filter(c=>c.createdAt>now-7*86400000).slice(-100);lastSent=0;save();renderCommands();void pump();return id;
+}
+function requestBoard(kind,payload){
+  const id=enqueue(kind,payload);
+  if(!id)return Promise.reject(Error('板子正在处理上一条指令，请等待完成后重试。'));
+  return new Promise((resolve,reject)=>boardWaiters.set(id,{resolve,reject}));
 }
 async function pump(){
   const command=pending();
@@ -74,6 +80,7 @@ function renderCommands(){
 }
 async function received(packet,pair){
   device=packet;device.sent_at=Math.min(packet.sent_at,Date.now());clearTimeout(gateTimer);
+  computerUI?.onBoard(packet);
   let remembered=false;try{localStorage.setItem(PAIR,pair);remembered=true;}catch{}
   if(remembered&&location.hash)history.replaceState(null,'',location.pathname+location.search);
   $('gate').hidden=true;$('control').hidden=false;
@@ -85,6 +92,8 @@ async function received(packet,pair){
       if(command.kind==='clear'&&receipt.state==='done')commands=commands.filter(c=>c.kind!=='chat'||c.createdAt>=command.createdAt);
     }
     ack.push(receipt.id);
+    const waiter=boardWaiters.get(receipt.id);
+    if(waiter){boardWaiters.delete(receipt.id);if(receipt.state==='done')waiter.resolve(receipt.result||{});else waiter.reject(Error(receipt.result?.error||'板子执行失败。'));}
   }
   if(ack.length)try{await channel.send(null,ack);}catch{}
   if(changed){save();renderCommands();error();}else renderStatus();
@@ -100,7 +109,7 @@ async function start(){
     if(!crypto.subtle)throw Error('当前浏览器不支持安全连接，请用手机系统浏览器打开。');
     const config=decodePair(pair);
     $('gate').hidden=true;$('control').hidden=false;
-    computerUI=await attachComputer(config,{enqueueWake:()=>enqueue('pc_wake'),selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click()});
+    computerUI=await attachComputer(config,{requestBoard,selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click()});
     channel=new DeviceChannel(config,{onPacket:p=>{void received(p,pair).catch(()=>error('消息处理暂时失败，正在重新连接。'));},onState:s=>{channelState=s;renderStatus();}});
     await channel.start();
     gateTimer=setTimeout(()=>{$('gate-title').textContent='正在等待小伴上线';$('gate-text').textContent='请确认板子保持供电和联网。页面会自动重连，专属钥匙仍然保留。';$('retry').hidden=false;},16000);
@@ -120,7 +129,7 @@ $('clear').onclick=()=>{if(confirm('开始新对话？清空板子的对话上�
 $('read-memory').onclick=()=>enqueue('memories');
 $('save-memory').onclick=()=>{const text=$('memory-draft').value.trim();if(text&&enqueue('remember',{text}))$('memory-draft').value='';};
 setInterval(()=>{
-  let changed=false;for(const c of commands)if(['queued','running'].includes(c.status)&&c.expiresAt<Date.now()){c.status='expired';changed=true;}
+  let changed=false;for(const c of commands)if(['queued','running'].includes(c.status)&&c.expiresAt<Date.now()){c.status='expired';changed=true;const waiter=boardWaiters.get(c.id);if(waiter){boardWaiters.delete(c.id);waiter.reject(Error('90 秒内未收到板子回执。请确认板子独立供电、联网，并重试。'));}}
   if(changed){save();renderCommands();}else renderStatus();void pump();
 },1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){renderStatus();void pump();}});

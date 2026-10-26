@@ -1,12 +1,32 @@
 <!doctype html>
-<html lang="zh-CN" data-build="20261026.3"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://broker.emqx.io:8084; base-uri 'none'; form-action 'none'"><meta name="theme-color" content="#1c493b"><title>小伴 · 随时遥控</title><link rel="stylesheet" href="./style.css?v=20261026.3"><script type="module" src="./app.mjs?v=20261026.3"></script></head>
+<html lang="zh-CN" data-build="20261026.4"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://broker.emqx.io:8084; base-uri 'none'; form-action 'none'"><meta name="theme-color" content="#1c493b"><title>小伴 · 随时遥控</title><link rel="stylesheet" href="./style.css?v=20261026.4"><script type="module" src="./app.mjs?v=20261026.4"></script></head>
 <body><header><a class="brand" href="./"><span class="logo">伴</span><span>小伴<small>随时连接</small></span></a><span class="account">免账号 · 专属遥控</span></header>
 <main><section id="gate" class="gate"><span class="logo big">伴</span><p class="eyebrow">YOUR DESK, ANYWHERE</p><h1 id="gate-title">正在连接你的小伴…</h1><p id="gate-text">无需登录任何账号。</p><button id="retry" class="primary" hidden>重新连接</button><noscript>请启用浏览器 JavaScript 后重新打开。</noscript></section>
 <section id="control" hidden><div class="intro"><div><p class="eyebrow">YOUR DESK, ANYWHERE</p><h1>人在哪里，小伴都在。</h1><p>问一句、记件事，或者看看办公室里的它。</p></div><span id="connection" class="pill">连接中</span></div><div id="error" role="alert" class="error" hidden></div>
 <div class="pc-shortcut"><div><strong>远程开机</strong><p>打开连连控，查看电脑画面。</p></div><button id="pc-entry" class="primary">进入电脑控制</button></div><p id="connection-note" class="connection-note" role="status" hidden></p>
 <div class="workspace"><section class="interaction"><nav aria-label="功能"><button data-tab="chat" class="selected">对话</button><button data-tab="computer">电脑开机</button><button data-tab="memory">记忆</button><button data-tab="activity">动态</button><button data-tab="device" class="mobile-only">设备</button></nav>
 <section id="chat" class="pane"><div id="conversation" class="conversation" aria-live="polite"></div><div class="compose"><textarea id="draft" maxlength="2000" rows="3" placeholder="有什么想问的，直接说…" aria-label="给小伴的问题"></textarea><div class="compose-actions"><label><input id="search" type="checkbox">联网查询</label><button id="clear" class="quiet">新对话</button><button id="send" class="primary">发送 ↑</button></div></div><p class="footnote">此浏览器的记录保留 7 天。小伴的回答仍需你判断。</p></section>
-<section id="computer" class="pane padded" hidden><h2>开机，打开连连控，查看画面。</h2><p id="pc-status" class="pc-state" role="status">正在连接电脑助手…</p><div class="pc-actions"><button class="primary" data-pc-action="full">开机并获取连连控截图</button><button data-pc-action="wake">仅唤醒电脑</button><button data-pc-action="open_asklink">打开连连控</button><button data-pc-action="capture_asklink">刷新连连控截图</button></div><p id="pc-result" class="pc-result" role="status" aria-live="polite">也可以在对话中输入：帮我打开电脑，启动连连控并截图。</p><figure id="pc-picture" hidden><img id="pc-image" alt="电脑返回的连连控窗口截图"><figcaption id="pc-caption"></figcaption></figure><p class="pc-note">板子保持独立供电，电脑接网线并保留电源。开机后如停在 Windows 登录或锁屏界面，请先通过连连控登录或解锁。截图仅在收到指令后获取。</p></section>
+<section id="computer" class="pane padded" hidden>
+<h2>选择电脑，再操作。</h2>
+<div class="pc-picker"><label for="pc-target">要操作的电脑</label><div class="pc-picker-row"><select id="pc-target" disabled><option>正在读取电脑列表…</option></select><button id="pc-add" type="button">添加电脑</button></div></div>
+<p id="pc-target-info" class="pc-help">电脑列表保存在板子上，手机和电脑共用。</p>
+<p id="pc-status" class="pc-state" role="status">正在读取电脑配置…</p>
+<div class="pc-actions"><button class="primary" data-pc-action="full" disabled>开机并获取连连控截图</button><button data-pc-action="wake" disabled>仅唤醒所选电脑</button><button data-pc-action="open_asklink" disabled>打开连连控</button><button data-pc-action="capture_asklink" disabled>刷新连连控截图</button></div>
+<p id="pc-result" class="pc-result" role="status" aria-live="polite">也可以说：帮我打开电脑2，启动连连控并截图。</p>
+<figure id="pc-picture" hidden><img id="pc-image" alt="所选电脑返回的连连控窗口截图"><figcaption id="pc-caption"></figcaption></figure>
+<details id="pc-settings" class="pc-settings"><summary>配置与接入这台电脑</summary>
+<div class="pc-fields"><label for="pc-name">电脑名称</label><input id="pc-name" maxlength="30" autocomplete="off" placeholder="例如：办公室电脑">
+<label for="pc-mac">有线网卡 MAC 地址</label><input id="pc-mac" maxlength="17" autocomplete="off" spellcheck="false" placeholder="例如：AA-BB-CC-DD-EE-10">
+<button id="pc-use-detected" type="button" hidden>使用这台电脑助手检测到的网卡</button>
+<label for="pc-network">电脑与板子的网络关系</label><select id="pc-network"><option value="unconfirmed">尚未确认</option><option value="local">接同一路由器的网线</option><option value="other">不同路由器或不同地点</option></select>
+<button id="pc-save" class="primary" type="button">保存到板子</button></div>
+<p id="pc-settings-result" class="pc-help" role="status"></p>
+<p class="pc-help">接入第二台 Windows 电脑：解压接入包，双击“安装此电脑”；回到本页，选中电脑2，使用检测到的网卡并保存。电脑名称可以自行修改。</p>
+<label class="pc-import-label" for="pc-import">也可以导入接入包生成的“电脑信息.json”</label><input id="pc-import" type="file" accept=".json,application/json">
+<button id="pc-export" type="button">下载此电脑的配对文件</button><p class="pc-help">更换接入包对应的电脑时，将这个配对文件放入包内再安装。每台电脑使用各自的文件。</p>
+</details>
+<details class="pc-settings"><summary>发了指令，电脑仍没开机？</summary><ol class="pc-help"><li>查看上方结果：只有“板子已发送”时，还不能确认电脑启动。</li><li>板子接独立充电器；电脑保留电源，并接路由器网线。</li><li>在主板 BIOS 中启用网络/PCIe 唤醒（常见名称为 Resume By PME 或 Wake on LAN），关闭 ErP 节能。不同主板菜单名称可能不同。</li><li>若电脑已经亮机但页面仍在等待，请通过连连控登录 Windows。桌面助手在登录后启动。</li></ol></details>
+<p class="pc-note">当前操作只发给所选电脑。执行期间暂不能切换，截图会注明电脑名称。截图仅按指令获取，在本页临时显示。</p></section>
 <section id="memory" class="pane padded" hidden><h2>重要的事，替你记住。</h2><p class="muted">保存到板子，断电后也在。</p><textarea id="memory-draft" maxlength="400" rows="3" placeholder="例如：我喜欢简洁的回答，咖啡不加糖。" aria-label="要保存的记忆"></textarea><div class="row"><button id="read-memory" class="quiet">刷新记忆</button><button id="save-memory" class="primary">保存到板子</button></div><ul id="memories" class="memories"></ul></section>
 <section id="activity" class="pane padded" hidden><h2>每个动作，都有回音。</h2><p class="muted">收到板子的执行回执，才算完成。</p><ul id="activities" class="activities"></ul></section>
 <section id="device" class="pane padded" hidden><div id="mobile-device"></div></section></section>

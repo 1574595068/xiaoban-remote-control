@@ -10,12 +10,17 @@ hosting server. A browser saves it after an authenticated board heartbeat.
 
 The base firmware supports chat, memory, status, clear and restart. Conversation
 history is kept in the browser for seven days; persistent memories stay on the board.
-The computer extension adds a fixed, locally configured Wake-on-LAN target. The board
-acknowledges sending the wake packets; that acknowledgement does not prove a successful boot.
+Computer extension v2 stores up to eight named computer profiles on the board. Each wake
+request specifies a profile ID and its expected Ethernet MAC. Configuration writes use
+revision checks; stale edits, duplicate MACs and unconfigured targets are rejected. The board
+acknowledges sending wake packets; that acknowledgement does not prove a successful boot.
 
 The computer tab can wake the computer, open AskLink (连连控), and display an encrypted
 window screenshot. This requires the owner's separately installed Windows companion.
-Its encryption and authentication keys are derived separately from the board channel.
+Each computer has its own derived encryption/authentication keys and MQTT topic. Desktop
+commands and receipts also bind the computer ID and expected Ethernet MAC. The selector
+is locked while an operation is running, and changing computers clears the displayed image.
+The enrollment package contains only that computer's scoped keys, never owner/board keys.
 The companion accepts only status, open-AskLink and screenshot operations; there is no
 arbitrary command, shutdown, remote keyboard or continuous recording endpoint.
 Screenshots are requested explicitly, cached briefly in companion memory for retries,
@@ -29,6 +34,7 @@ the existing remote desktop application. No automatic login or password change i
 or performed. Locked or protected desktop screenshots return an explanatory error.
 
 Base chat functions remain compatible with the MicroPython assistant firmware 0.3.0.
-Computer wake requires the computer-command extension and local target provisioning.
+Computer controls require extension v2 and a separately enrolled companion on each PC.
+The old single-computer channel is intentionally not used by v2.
 The public broker has no uptime guarantee. HTTPS and WSS internet access are required;
 the service worker only caches the static page, not a connection to an offline device.
