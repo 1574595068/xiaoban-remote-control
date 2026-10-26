@@ -1,5 +1,5 @@
-import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.8';
-import {attachComputer} from './computer-ui.mjs?v=20261026.8';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.9';
+import {attachComputer} from './computer-ui.mjs?v=20261026.9';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
 const BUILD=document.documentElement.dataset.build;
 const labels={pc_wake:'发送电脑唤醒包',pc_list:'读取电脑列表',pc_save:'保存电脑配置',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
@@ -7,6 +7,9 @@ const boardWaiters=new Map();
 const states={queued:'等待板子连接',running:'等待板子回复',done:'板子已完成',error:'执行失败',expired:'已超时'};
 let computerUI;let channel,device=null,channelState='connecting',sending=false,lastSent=0,gateTimer,commands=[];
 try{const saved=JSON.parse(localStorage.getItem(HISTORY)||'[]');if(Array.isArray(saved))commands=saved.filter(c=>c&&typeof c.id==='string'&&labels[c.kind]&&Number.isFinite(c.createdAt)&&c.createdAt>Date.now()-7*86400000).slice(-100);}catch{}
+// Never run an old, unsent instruction merely because a new page has connected.
+for(const c of commands)if(c.status==='queued'&&!c.firstSentAt){c.status='expired';c.result={error:'这条旧指令没有发出，已停止等待。需要执行时请重新发送。'};}
+save();
 function save(){try{localStorage.setItem(HISTORY,JSON.stringify(commands.slice(-100)));}catch{}}
 function error(message=''){$('error').textContent=message;$('error').hidden=!message;}
 function element(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=String(text);if(cls)node.className=cls;return node;}
@@ -29,7 +32,7 @@ function requestBoard(kind,payload){
 async function sendDiagnostic(event){
   if(!channel?.connected)return;
   try{await channel.sendPacket({client_diagnostic:{event,page_build:BUILD,board_heartbeat_at:device?.sent_at??null,
-    pending_kind:pending()?.kind??null,browser_online:navigator.onLine}});}catch{}
+    pending_kind:pending()?.kind??null,browser_online:navigator.onLine,clock_offset_ms:channel.clockOffset,clock_synchronized:channel.clockSynchronized}});}catch{}
 }
 async function pump(){
   const command=pending();
@@ -37,7 +40,7 @@ async function pump(){
   sending=true;
   try{
     await channel.send({id:command.id,kind:command.kind,payload:command.payload,expires_at:command.expiresAt,source_build:BUILD});
-    lastSent=Date.now();command.firstSentAt??=lastSent;command.lastSentAt=lastSent;command.attempts=(command.attempts||0)+1;command.status='running';save();renderCommands();
+    lastSent=Date.now();command.firstSentAt??=lastSent;command.lastSentAt=lastSent;command.clockOffset=channel.clockOffset||0;command.attempts=(command.attempts||0)+1;command.status='running';save();renderCommands();
   }catch{error('连接暂时中断，恢复后会自动重试同一条指令。');}
   finally{sending=false;}
 }
@@ -63,14 +66,16 @@ function renderStatus(){
 }
 function diagnosticCommand(c){
   if(!c)return null;
-  return {id:c.id,kind:c.kind,computer_id:c.payload?.computer_id,status:c.status,created_at:c.createdAt,
-    first_sent_at:c.firstSentAt??null,last_sent_at:c.lastSentAt??null,attempts:c.attempts||0,
-    receipt_received_at:c.receiptAt??null,board_completed_at:c.completedAt??null,packets_sent:c.result?.packets_sent??null};
+  const offset=c.clockOffset??channel?.clockOffset??0,stamp=t=>t?t+offset:null;
+  return {id:c.id,kind:c.kind,computer_id:c.payload?.computer_id,status:c.status,created_at:stamp(c.createdAt),
+    first_sent_at:stamp(c.firstSentAt),last_sent_at:stamp(c.lastSentAt),attempts:c.attempts||0,
+    receipt_received_at:stamp(c.receiptAt),board_completed_at:c.completedAt??null,packets_sent:c.result?.packets_sent??null};
 }
 function deliveryReport(){
   const wake=device?.status?.last_wake;
-  return {page_build:BUILD,checked_at:Date.now(),browser_online:navigator.onLine,channel_state:channelState,
-    board_heartbeat_at:device?.sent_at??null,board_online:online()&&!!channel?.connected,
+  return {page_build:BUILD,checked_at:Date.now()+(channel?.clockOffset||0),browser_online:navigator.onLine,channel_state:channelState,
+    clock_offset_ms:channel?.clockOffset??null,clock_synchronized:!!channel?.clockSynchronized,
+    board_heartbeat_at:device?.source_sent_at??device?.sent_at??null,board_online:online()&&!!channel?.connected,
     board_diagnostics_version:device?.status?.delivery_diagnostics_version??0,
     board_last_wake:wake?{id:wake.id,computer_id:wake.computer_id,state:wake.state,completed_at:wake.completed_at??null,source_build:wake.source_build??null,packets_sent:wake.packets_sent??null}:null,
     commands:commands.filter(c=>c.kind==='pc_wake').slice(-8).map(diagnosticCommand)};
@@ -80,6 +85,7 @@ function renderDelivery(){
   const report=deliveryReport(),last=report.commands.at(-1),wake=report.board_last_wake;
   const stamp=t=>t?new Date(t).toLocaleString('zh-CN',{hour12:false}):'尚无记录';
   const rows=[['网页版本',BUILD],['手机／网页连接',channelState==='connected'?'已连接':navigator.onLine?'正在重连':'当前设备没有网络'],
+    ['时间校准',report.clock_synchronized?'已自动校准':'尚未校准'],
     ['板子心跳',stamp(report.board_heartbeat_at)],['本页最近点击',last?stamp(last.created_at)+' · '+last.computer_id:'尚无开机操作'],
     ['本页发出指令',last?.first_sent_at?stamp(last.first_sent_at)+' · '+last.attempts+' 次尝试':last?'尚未发出，请等板子连接':'尚无记录'],
     ['收到执行回执',stamp(last?.receipt_received_at)],

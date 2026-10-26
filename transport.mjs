@@ -1,4 +1,20 @@
 const enc = new TextEncoder(), dec = new TextDecoder();
+let clockCalibration;
+async function networkClock(){
+  if(typeof window==='undefined')return {offset:0,synced:false};
+  if(!clockCalibration)clockCalibration=(async()=>{
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000),started=Date.now();
+    try{
+      const url=new URL('./index.html',import.meta.url);url.searchParams.set('clock',crypto.randomUUID());
+      const response=await fetch(url,{method:'HEAD',cache:'no-store',signal:controller.signal});
+      const serverTime=Date.parse(response.headers.get('Date'));
+      if(!response.ok||!Number.isFinite(serverTime))throw Error('Clock unavailable');
+      return {offset:serverTime-(started+Date.now())/2,synced:true};
+    }catch{return {offset:0,synced:false};}
+    finally{clearTimeout(timeout);}
+  })();
+  return clockCalibration;
+}
 const hex = a => Array.from(a, x => x.toString(16).padStart(2, '0')).join('');
 const bytes = h => {
   if (typeof h !== 'string' || !/^(?:[0-9a-f]{2})+$/i.test(h)) throw Error('Invalid hex');
@@ -48,7 +64,11 @@ export class DeviceChannel {
     this.config=config;this.onPacket=onPacket;this.onState=onState;this.inbound=inbound;this.outbound=outbound;this.requireStatus=requireStatus;this.buffer=new Uint8Array();
     this.chain=Promise.resolve();this.sequence=10;this.failures=0;this.closed=false;this.connected=false;this.lastRxAt=0;
   }
-  async start(){this.crypto=await codec(this.config);this.connect();}
+  async start(){
+    this.crypto=await codec(this.config);
+    const clock=await networkClock();this.clockOffset=clock.offset;this.clockSynchronized=clock.synced;
+    this.connect();
+  }
   connect(){
     if(this.closed)return;
     this.connected=false;this.onState('connecting');this.buffer=new Uint8Array();this.lastRxAt=Date.now();
@@ -100,10 +120,11 @@ export class DeviceChannel {
         if(kind&6){this.ws.send(frame(0x40,body.slice(offset,offset+2)));offset+=2;}
         if(topic!==this.config.topic+'/'+this.inbound)continue;
         let value;
-        try{value=await this.crypto.open(body.slice(offset),this.inbound);}catch{continue;}
+        try{value=await this.crypto.open(body.slice(offset),this.inbound,Date.now()+(this.clockOffset||0));}catch{continue;}
         if(ws!==this.ws)return;
         if(this.requireStatus&&(typeof value.boot_id!=='string'||!value.status||typeof value.status!=='object'))continue;
-        this.onPacket(value);
+        // Consumers compare local elapsed times; authenticate against network time.
+        this.onPacket({...value,source_sent_at:value.sent_at,sent_at:value.sent_at-(this.clockOffset||0)});
       }
     }
   }
@@ -111,7 +132,9 @@ export class DeviceChannel {
   async sendPacket(value){
     if(!this.connected||this.ws?.readyState!==WebSocket.OPEN)throw Error('连接尚未就绪');
     const ws=this.ws;
-    const payload=await this.crypto.seal({...value,sent_at:Date.now()},this.outbound);
+    const offset=this.clockOffset||0;
+    const command=value.command&&Number.isFinite(value.command.expires_at)?{...value.command,expires_at:value.command.expires_at+offset}:value.command;
+    const payload=await this.crypto.seal({...value,...(value.command?{command}:{}),sent_at:Date.now()+offset},this.outbound);
     if(ws!==this.ws||!this.connected||ws.readyState!==WebSocket.OPEN)throw Error('连接已改变，正在重试');
     if(payload.length>580000)throw Error('消息过大，请降低截图尺寸。');
     this.sequence=this.sequence%65535+1;

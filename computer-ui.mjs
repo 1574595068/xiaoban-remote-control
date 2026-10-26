@@ -1,4 +1,4 @@
-import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.8';
+import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.9';
 const $=id=>document.getElementById(id);
 export function classifyComputerRequest(text){
   text=text.trim();

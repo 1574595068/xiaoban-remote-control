@@ -58,3 +58,9 @@ Older receipts without timestamps are labelled as old records. These timestamps 
 prove that the computer powered on. Diagnostic exports exclude keys, chat and images.
 The transport reconnects silent sockets and checks connection freshness on foreground
 resume; queued commands keep their original ID and expiry across reconnects.
+Browser time is calibrated against a same-origin, uncached HTTP Date header before
+connecting. Authentication and wire expiries use network time; local elapsed-time
+checks use timestamps converted into the browser's time frame. This avoids rejecting
+fresh board heartbeats when a phone's clock is ahead. Reopening a page expires old
+instructions that had never been sent, so they cannot block a new action or execute
+unexpectedly. Already-sent requests retain their IDs and receipts.
