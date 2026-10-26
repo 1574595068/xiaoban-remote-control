@@ -1,5 +1,5 @@
-import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.5';
-import {attachComputer} from './computer-ui.mjs?v=20261026.5';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.6';
+import {attachComputer} from './computer-ui.mjs?v=20261026.6';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
 const labels={pc_wake:'发送电脑唤醒包',pc_list:'读取电脑列表',pc_save:'保存电脑配置',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
 const boardWaiters=new Map();

@@ -1,4 +1,4 @@
-import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.5';
+import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.6';
 const $=id=>document.getElementById(id);
 export function classifyComputerRequest(text){
   text=text.trim();
@@ -114,10 +114,10 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
     }
     busy(running);renderStatus();
   }
-  async function waitOnline(target,deadline){
+  async function waitOnline(target,deadline,after=0){
     while(Date.now()<deadline){
       if(closed)throw Error('页面已关闭，停止等待。');
-      if(target.online())return;
+      if(target.online()&&target.last.sent_at>=after)return;
       await new Promise(r=>setTimeout(r,500));
     }
     throw Error('板子已发送唤醒包，但 90 秒内未收到这台电脑的桌面助手回执。请检查主板网络唤醒设置；若已亮机但停在登录界面，请先通过连连控登录。');
@@ -133,12 +133,13 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
     busy(true);$('pc-picture').hidden=true;$('pc-image').removeAttribute('src');
     try{
       if(receiver?.online()&&target.mac&&receiver.last.status.ethernet_mac!==target.mac)throw Error('助手报告的网卡与所选电脑不一致，请先核对配置。');
-      if(wake&&!receiver.online()){
+      if(wake){
+        const wakeStarted=Date.now();
         message('「'+target.name+'」正在等待板子确认收到开机指令…');
         const result=await requestBoard('pc_wake',{computer_id:target.id,expected_mac:target.mac});
         if(result.computer_id!==target.id)throw Error('板子的回执不属于所选电脑，已停止后续操作。');
         message('「'+target.name+'」板子已发送 '+result.packets_sent+' 个唤醒包；正在等待这台电脑的桌面助手上线，尚未确认开机。');
-        await waitOnline(receiver,Date.now()+90000);
+        await waitOnline(receiver,Date.now()+90000,wakeStarted);
       }
       if(action==='wake'){message('「'+target.name+'」桌面助手已在线。');return;}
       message('「'+target.name+'」正在等待电脑执行'+(action==='open_asklink'?'打开连连控':'连连控截图')+'…');
