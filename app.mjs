@@ -1,5 +1,5 @@
-import {DeviceChannel,decodePair} from './transport.mjs';
-import {attachComputer} from './computer-ui.mjs';
+import {DeviceChannel,decodePair} from './transport.mjs?v=20261026.3';
+import {attachComputer} from './computer-ui.mjs?v=20261026.3';
 const $=id=>document.getElementById(id), PAIR='xiaoban.remote.pair.v1', HISTORY='xiaoban.remote.history.v1';
 const labels={pc_wake:'唤醒电脑',chat:'对话',remember:'保存记忆',forget:'删除记忆',memories:'读取记忆',status:'刷新状态',restart:'重启板子',clear:'开始新对话'};
 const states={queued:'等待板子连接',running:'等待板子回复',done:'板子已完成',error:'执行失败',expired:'已超时'};
@@ -32,6 +32,8 @@ function renderStatus(){
   const active=online(),age=device?Math.max(0,Math.floor((Date.now()-device.sent_at)/1000)):null;
   $('connection').textContent=active?'板子在线':channelState==='connected'?'等待板子':'连接中';
   $('connection').className='pill'+(active?' online':'');
+  $('connection-note').hidden=active;
+  $('connection-note').textContent=channelState==='connected'?'还未收到板子的在线心跳。请确认板子已供电并联网；开机指令会等待板子连接后发送。':'正在连接板子。电脑控制入口已经可以打开，实际执行需要板子或电脑助手在线。';
   for(const id of ['desktop-device','mobile-device']){
     const box=$(id);box.replaceChildren();
     box.append(element('p',active?(pending()||device.status.busy?'正在处理你的指令…':'我在办公室，随时等你。'):'正在等待板子，请确认它保持供电和联网。','device-note'));
@@ -97,6 +99,7 @@ async function start(){
   try{
     if(!crypto.subtle)throw Error('当前浏览器不支持安全连接，请用手机系统浏览器打开。');
     const config=decodePair(pair);
+    $('gate').hidden=true;$('control').hidden=false;
     computerUI=await attachComputer(config,{enqueueWake:()=>enqueue('pc_wake'),selectTab:id=>document.querySelector('[data-tab="'+id+'"]').click()});
     channel=new DeviceChannel(config,{onPacket:p=>{void received(p,pair).catch(()=>error('消息处理暂时失败，正在重新连接。'));},onState:s=>{channelState=s;renderStatus();}});
     await channel.start();
@@ -108,6 +111,8 @@ for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>{
   for(const id of ['chat','memory','activity','device','computer'])$(id).hidden=id!==tab.dataset.tab;
   if(tab.dataset.tab==='memory'&&!commands.some(c=>Array.isArray(c.result?.items))&&!pending())enqueue('memories');
 };
+$('pc-entry').onclick=()=>document.querySelector('[data-tab="computer"]').click();
+if(new URLSearchParams(location.search).get('view')==='computer')$('pc-entry').click();
 $('retry').onclick=()=>void start();
 function submit(){const text=$('draft').value.trim();if(text&&computerUI?.handleText(text)){$('draft').value='';return;}if(text&&enqueue('chat',{text,search:$('search').checked}))$('draft').value='';}
 $('send').onclick=submit;$('draft').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submit();}};
@@ -120,4 +125,4 @@ setInterval(()=>{
 },1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){renderStatus();void pump();}});
 renderCommands();void start();
-if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});

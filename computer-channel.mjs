@@ -1,4 +1,4 @@
-import {DeviceChannel} from './transport.mjs';
+import {DeviceChannel} from './transport.mjs?v=20261026.3';
 export async function computerConfig(base){
   async function derive(secret,label){
     const bytes=Uint8Array.from(secret.match(/../g),h=>parseInt(h,16));
