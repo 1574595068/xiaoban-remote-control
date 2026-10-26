@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-build="20261026.6"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://broker.emqx.io:8084; base-uri 'none'; form-action 'none'"><meta name="theme-color" content="#1c493b"><title>小伴 · 随时遥控</title><link rel="stylesheet" href="./style.css?v=20261026.6"><script type="module" src="./app.mjs?v=20261026.6"></script></head>
+<html lang="zh-CN" data-build="20261026.7"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' wss://broker.emqx.io:8084; base-uri 'none'; form-action 'none'"><meta name="theme-color" content="#1c493b"><title>小伴 · 随时遥控</title><link rel="stylesheet" href="./style.css?v=20261026.7"><script type="module" src="./app.mjs?v=20261026.7"></script></head>
 <body><header><a class="brand" href="./"><span class="logo">伴</span><span>小伴<small>随时连接</small></span></a><span class="account">免账号 · 专属遥控</span></header>
 <main><section id="gate" class="gate"><span class="logo big">伴</span><p class="eyebrow">YOUR DESK, ANYWHERE</p><h1 id="gate-title">正在连接你的小伴…</h1><p id="gate-text">无需登录任何账号。</p><button id="retry" class="primary" hidden>重新连接</button><noscript>请启用浏览器 JavaScript 后重新打开。</noscript></section>
 <section id="control" hidden><div class="intro"><div><p class="eyebrow">YOUR DESK, ANYWHERE</p><h1>人在哪里，小伴都在。</h1><p>问一句、记件事，或者看看办公室里的它。</p></div><span id="connection" class="pill">连接中</span></div><div id="error" role="alert" class="error" hidden></div>
@@ -12,7 +12,9 @@
 <p id="pc-target-info" class="pc-help">电脑列表保存在板子上，手机和电脑共用。</p>
 <p id="pc-status" class="pc-state" role="status">正在读取电脑配置…</p>
 <div class="pc-actions"><button class="primary" data-pc-action="full" disabled>开机并获取连连控截图</button><button data-pc-action="wake" disabled>仅唤醒所选电脑</button><button data-pc-action="open_asklink" disabled>打开连连控</button><button data-pc-action="capture_asklink" disabled>刷新连连控截图</button></div>
+<p class="pc-help">仅唤醒：由板子发送开机信号，无需桌面助手。打开连连控和截图：需要电脑启动并登录 Windows。</p>
 <p id="pc-result" class="pc-result" role="status" aria-live="polite">也可以说：帮我打开电脑2，启动连连控并截图。</p>
+<button id="pc-stop-wait" type="button" hidden>停止等待，不执行后续操作</button>
 <figure id="pc-picture" hidden><img id="pc-image" alt="所选电脑返回的连连控窗口截图"><figcaption id="pc-caption"></figcaption></figure>
 <details id="pc-settings" class="pc-settings"><summary>配置与接入这台电脑</summary>
 <div class="pc-fields"><label for="pc-name">电脑名称</label><input id="pc-name" maxlength="30" autocomplete="off" placeholder="例如：办公室电脑">

@@ -1,4 +1,4 @@
-import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.6';
+import {ComputerClient,computerConfig,validComputerId} from './computer-channel.mjs?v=20261026.7';
 const $=id=>document.getElementById(id);
 export function classifyComputerRequest(text){
   text=text.trim();
@@ -24,7 +24,7 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
     const p=command.payload?.profile;if(!p||seen.has(p.id))continue;seen.add(p.id);
     if(command.status!=='done'&&!edits[p.id]&&validEdit(p.id,{profile:p}))edits[p.id]={profile:p,revision:command.payload.revision};
   }
-  const clients=new Set();
+  const clients=new Set();let waiting=null;
   function current(){return profiles.find(p=>p.id===selected);}
   function same(a,b){return !!a&&!!b&&['id','name','wake_scope'].every(k=>a[k]===b[k])&&String(a.mac).replace(/[-:\s]/g,'').toUpperCase()===String(b.mac).replace(/[-:\s]/g,'').toUpperCase();}
   function fields(){return {id:selected,name:$('pc-name').value.trim(),mac:$('pc-mac').value.trim().toUpperCase(),wake_scope:$('pc-network').value};}
@@ -114,13 +114,14 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
     }
     busy(running);renderStatus();
   }
-  async function waitOnline(target,deadline,after=0){
+  async function waitOnline(target,deadline,after,control){
     while(Date.now()<deadline){
       if(closed)throw Error('页面已关闭，停止等待。');
+      if(control.stopped)throw Error('已停止等待桌面助手，不再自动打开连连控或截图。板子已经发送的唤醒包无法撤回，仍未确认电脑是否开机。');
       if(target.online()&&target.last.sent_at>=after)return;
       await new Promise(r=>setTimeout(r,500));
     }
-    throw Error('板子已发送唤醒包，但 90 秒内未收到这台电脑的桌面助手回执。请检查主板网络唤醒设置；若已亮机但停在登录界面，请先通过连连控登录。');
+    throw Error('板子已发送唤醒包，但 90 秒内未收到新的桌面助手心跳，已停止后续操作。尚未确认电脑是否开机；电脑需启动并登录 Windows，桌面助手才能打开连连控和截图。');
   }
   async function run(action){
     selectTab('computer');if(running)return;
@@ -137,11 +138,15 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
         const wakeStarted=Date.now();
         message('「'+target.name+'」正在等待板子确认收到开机指令…');
         const result=await requestBoard('pc_wake',{computer_id:target.id,expected_mac:target.mac});
-        if(result.computer_id!==target.id)throw Error('板子的回执不属于所选电脑，已停止后续操作。');
-        message('「'+target.name+'」板子已发送 '+result.packets_sent+' 个唤醒包；正在等待这台电脑的桌面助手上线，尚未确认开机。');
-        await waitOnline(receiver,Date.now()+90000,wakeStarted);
+        if(result.computer_id!==target.id||result.target_mac!==target.mac)throw Error('板子回执中的电脑或网卡与所选目标不一致，已停止后续操作。');
+        if(!Number.isInteger(result.packets_sent)||result.packets_sent<1)throw Error('板子未确认发出唤醒包，尚未确认电脑开机。');
+        const sent='「'+target.name+'」板子已发送 '+result.packets_sent+' 个唤醒包。';
+        if(action==='wake'){message(sent+'发送已完成，无需等待桌面助手；尚未确认电脑是否开机。');return;}
+        message(sent+'尚未确认电脑是否开机。后续打开连连控和截图，需要电脑启动并登录 Windows；正在等待桌面助手上线，最多 90 秒。');
+        const control={stopped:false};waiting=control;$('pc-stop-wait').hidden=false;
+        try{await waitOnline(receiver,Date.now()+90000,wakeStarted,control);}
+        finally{waiting=null;$('pc-stop-wait').hidden=true;}
       }
-      if(action==='wake'){message('「'+target.name+'」桌面助手已在线。');return;}
       message('「'+target.name+'」正在等待电脑执行'+(action==='open_asklink'?'打开连连控':'连连控截图')+'…');
       const result=await receiver.run(action==='full'?'open_capture':action,{timeout:45000,expectedMac:target.mac||null});
       message('「'+target.name+'」'+(result.text||'已完成。'));
@@ -157,6 +162,7 @@ export async function attachComputer(base,{requestBoard,selectTab,boardState=()=
     finally{busy(false);renderStatus();}
   }
   $('pc-target').onchange=()=>void switchTo($('pc-target').value);
+  $('pc-stop-wait').onclick=()=>{if(waiting)waiting.stopped=true;};
   function changed(){
     dirty=true;for(const id of ['pc-name','pc-mac','pc-network'])$(id).removeAttribute('aria-invalid');
     rememberEdit();$('pc-use-saved').hidden=false;

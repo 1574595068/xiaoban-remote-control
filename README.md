@@ -21,8 +21,14 @@ the profile returned by the board. Revision conflicts affecting another computer
 refreshed and retried once; changes to the same computer preserve the draft and require
 an explicit choice before overwriting.
 
-The computer tab can wake the computer, open AskLink (连连控), and display an encrypted
-window screenshot. This requires the owner's separately installed Windows companion.
+The computer tab can send a Wake-on-LAN request without a Windows companion. Every
+explicit wake request sends packets, even when a recent heartbeat says the PC is online.
+Wake-only finishes after a board receipt matching the computer ID and Ethernet MAC;
+it reports transmission, never confirmed power-on. Opening AskLink (连连控) and displaying
+an encrypted window screenshot require the owner's separately installed Windows companion.
+The combined workflow waits up to 90 seconds for a new companion heartbeat after sending
+the wake request. Stop-waiting prevents subsequent desktop operations and does not undo
+the wake packets already sent. A timeout does not imply that the PC is powered off.
 Each computer has its own derived encryption/authentication keys and MQTT topic. Desktop
 commands and receipts also bind the computer ID and expected Ethernet MAC. The selector
 is locked while an operation is running, and changing computers clears the displayed image.
